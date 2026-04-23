@@ -1,8 +1,9 @@
-"""Animate 330 K PV anomaly with TempestExtremes tracks + blob outlines.
+"""Animate 330 K PV anomaly with TempestExtremes dual-polarity tracks.
 
 Outputs: outputs/<lc>/plots/pv330_tracked.gif
-  - Up to 6 top-ranked PV-anom tracks (blue lines) on NH polar stereo
-    - Blob outlines (cyan) where pv_anom_330 > 0.1 PVU
+  - Up to 6 top-ranked C (q' > +0.1 PVU) tracks, blue lines
+  - Up to 6 top-ranked AC (q' < -0.1 PVU) tracks, orange lines
+  - Blob outlines cyan (pos) / magenta (neg)
 """
 from __future__ import annotations
 import sys
@@ -51,14 +52,18 @@ def animate(lc, stride=1, trail_hours=24):
         pv = pv.isel(lat=slice(None, None, -1))
 
     blob_pos = load_blob(out_dir / "tracks" / "blobs_pv330_pos.nc")
+    blob_neg = load_blob(out_dir / "tracks" / "blobs_pv330_neg.nc")
 
-    top6_path = out_dir / "tracks" / "tracks_max_top6_pv330.txt"
-    if top6_path.exists():
-        tr_max = parse_stitchnodes(top6_path)
-    else:
-        tr_max = keep_top_n(parse_stitchnodes(
-            out_dir / "tracks" / "tracks_max_pv330.txt"), 6)
-    print(f"[{lc}] {len(tr_max)} PV-anom tracks (top-6)")
+    def _load_top6(tag):
+        top6 = out_dir / "tracks" / f"tracks_{tag}_top6_pv330.txt"
+        if top6.exists():
+            return parse_stitchnodes(top6)
+        return keep_top_n(parse_stitchnodes(
+            out_dir / "tracks" / f"tracks_{tag}_pv330.txt"), 6)
+
+    tr_max = _load_top6("max")
+    tr_min = _load_top6("min")
+    print(f"[{lc}] C={len(tr_max)}  AC={len(tr_min)} top-6 tracks")
 
     lat = pv["lat"].values
     lon = pv["lon"].values
@@ -106,7 +111,7 @@ def animate(lc, stride=1, trail_hours=24):
                             transform=data_crs)
 
         # Need to find frame index in blob dataset (matching time)
-        for blob, colour in ((blob_pos, "cyan"),):
+        for blob, colour in ((blob_pos, "cyan"), (blob_neg, "magenta")):
             if blob is None:
                 continue
             try:
@@ -144,11 +149,11 @@ def animate(lc, stride=1, trail_hours=24):
                                     zorder=5, transform=data_crs)
                     artists.append(sc)
 
-        draw_tracks(tr_max, "blue")    # PV-anom maxima tracks
+        draw_tracks(tr_max, "blue")    # C  (q' > +0.1 PVU)
+        draw_tracks(tr_min, "orange")  # AC (q' < -0.1 PVU)
 
         title.set_text(f"{lc.upper()}  day {day:5.2f}   "
-                       r"$q'_{330K}$ + tracked PV-anom maxima "
-                       "(blue line, cyan blob outline)")
+                       r"$q'_{330K}$ + C (blue/cyan) & AC (orange/magenta) tracks")
         return ()
 
     anim = FuncAnimation(fig, draw, frames=frames, interval=120, blit=False)

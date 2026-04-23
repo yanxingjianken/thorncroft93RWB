@@ -148,63 +148,133 @@ Quick recipes:
 ```mermaid
 graph TD
     A[config/lc1.toml, config/lc2.toml] --> B[scripts/run_lc.jl]
-    B -->|SpeedyWeather.jl<br/>T95, 15 σ-levels, 16 days| C[outputs/&lt;lc&gt;/raw/run_*/output.nc]
+    B -->|SpeedyWeather.jl<br/>T95, 15 &sigma;-levels, 16 days| C[outputs/&lt;lc&gt;/raw/run_*/output.nc]
     C --> D[scripts/postprocess.py]
-    D --> E[outputs/&lt;lc&gt;/processed.nc<br/>PV, θ, u/v on θ and p, zm_u, u'v', EKE, T_surface]
-    E --> F1[plotting/thorncroft_figs.py<br/>Figs 3-15 sanity check PNGs]
-    E --> F2[plotting/make_figures.py<br/>3-hourly MP4 animations]
+    D --> E[outputs/&lt;lc&gt;/processed.nc]
+    E --> F1[plotting/thorncroft_figs.py]
+    E --> F2[plotting/make_figures.py]
     F1 --> G1[outputs/&lt;lc&gt;/plots/paper_fig*.png]
     F2 --> G2[outputs/&lt;lc&gt;/mp4/*.mp4]
 
-    E --> H[scripts/prep_pv330_anom.py<br/>θ=330 K PV, anomaly wrt zonal mean]
+    E --> H[scripts/prep_pv330_anom.py<br/>&theta;=330 K PV, anomaly wrt zonal mean]
     H --> I[outputs/&lt;lc&gt;/pv330_anom.nc]
-    I --> J[scripts/run_tempest_pv330.sh<br/>TempestExtremes DetectNodes + StitchNodes<br/>fixed threshold >0.1 PVU, 20–80°N, day 6–13, span≥90 h]
-    J --> K[outputs/&lt;lc&gt;/tracks/tracks_max_pv330.txt<br/>+ blobs_pv330_pos.nc]
-    K --> L[scripts/select_top6.py]
-    L --> M[tracks_max_top6_pv330.txt]
-    M --> N[scripts/build_composites.py<br/>41×41 patches centred on track, 145-hour window]
-    N --> O[outputs/&lt;lc&gt;/composites/C_composite.nc]
-    O --> P[scripts/project_composite.py<br/>pvtend 5-basis &#40;F_INT, F_DEF, F_PROP, LAP, I&#41;]
-    P --> Q[decomp_C.png, decomp_bases_C.png]
-    O --> R[scripts/tilt_evolution.py<br/>rotation-symmetrized peak basis,<br/>observed/predicted ellipse over 1 h horizon]
-    R --> S[theta_tilt_C.png, tilt_animation_C.gif]
-    K --> T[plotting/make_pv330_tracked_gif.py]
+
+    CFG[scripts/_config.py<br/>shared constants<br/>patch, thresholds, stitch, symm, cbar] -.-> J
+    CFG -.-> L
+    CFG -.-> EXP
+    CFG -.-> N
+    CFG -.-> P
+    CFG -.-> R
+
+    I --> J[scripts/run_tempest_pv330.sh<br/>DetectNodes +Max/-Min, +/-0.1 PVU<br/>StitchNodes range=7&deg; span>=90h maxgap=6h<br/>DetectBlobs area>=5e5 km&sup2;<br/>lat 35-75&deg;N]
+    J --> K1[tracks_max_pv330.txt  +  tracks_min_pv330.txt<br/>blobs_pv330_&#123;pos,neg&#125;.nc]
+    K1 --> L[scripts/select_top6.py<br/>rank by peak &#124;q'&#124; &times; span,<br/>trim to common window per polarity]
+    L --> M[tracks_&#123;max,min&#125;_top6_pv330.txt]
+    M --> EXP[scripts/export_track_csv.py]
+    EXP --> CSV[track_centers_&#123;C,AC&#125;.csv]
+    CSV --> N[scripts/build_composites.py<br/>fixed-lat 41&times;41 patch,<br/>lon tracks, lat=55&deg;&plusmn;20&deg;, 145 hourly frames]
+    N --> O[composites/&#123;C,AC&#125;_composite.nc]
+    O --> P[scripts/project_composite.py<br/>pvtend 5-basis &#40;F_INT F_DEF F_PROP LAP I&#41;<br/>mask q'>0 C / q'<0 AC]
+    P --> Q[decomp_&#123;C,AC&#125;.png<br/>decomp_bases_&#123;C,AC&#125;.png]
+    O --> R[scripts/tilt_evolution.py<br/>1-h forecast ellipse vs observed,<br/>cumulative &Delta;&theta; figure,<br/>MP4 animation]
+    R --> S[theta_tilt_&#123;C,AC&#125;.png<br/>theta_tilt_accum_&#123;C,AC&#125;.png<br/>tilt_animation_&#123;C,AC&#125;.mp4]
+    K1 --> T[plotting/make_pv330_tracked_gif.py<br/>dual-polarity overlay]
     T --> U[outputs/&lt;lc&gt;/plots/pv330_tracked.gif]
 ```
 
 ## Reproducing Thorncroft 1993 RWB tracking
 
-We reproduce the anticyclonic (LC1) and cyclonic (LC2) wave-breaking
-life cycles of **Thorncroft, Hoskins & McIntyre (1993)** using two
-open-source packages:
+Dual-polarity cyclonic (**C**, $q' > +0.1$ PVU) and anticyclonic
+(**AC**, $q' < -0.1$ PVU) wave-breaking life cycles are diagnosed on
+the $\theta = 330$ K isentrope from the SpeedyWeather runs:
 
 - **[SpeedyWeather.jl](https://speedyweather.github.io/)** — dry,
-  frictionless `PrimitiveDryModel` at T95 × 15 σ-levels integrates
-  the baroclinic primitive equations with ∇⁶ hyperdiffusion (1 h
-  damping time on the smallest retained scale). Initial condition
-  is the Jablonowski & Williamson 2006 analytic jet (rescaled to
-  u₀ = 47 m/s) plus a wave-6, 1 mb surface-pressure perturbation;
-  LC2 adds the ±10 m/s barotropic addition at 20°/50°N.
+  frictionless `PrimitiveDryModel` at T95 &times; 15 &sigma;-levels integrates
+  the baroclinic primitive equations with $\nabla^6$ hyperdiffusion
+  (1 h damping on the smallest retained scale). Initial condition is
+  the Jablonowski &amp; Williamson (2006) analytic jet rescaled to
+  $u_0 = 47$ m s$^{-1}$ plus a wave-6, 1 mb surface-pressure
+  perturbation; LC2 adds the $\pm 10$ m s$^{-1}$ barotropic addition
+  at 20&deg;/50&deg;N.
 - **[TempestExtremes](https://climate.ucdavis.edu/tempestextremes.php)**
-  (`DetectNodes`, `StitchNodes`, `DetectBlobs`) tracks the
-  PV-anomaly on the 330 K isentrope (the physically relevant
-  streamer/bomb signature). `run_tempest_pv330.sh` applies a
-  fixed threshold (>0.1 PVU) over 20–80°N and
-  days 6–13, requiring track spans ≥ 90 h. Top-6 tracks are
-  additionally trimmed to a common start/end window so all six
-  lifecycles are synchronized for compositing. Top-6 tracks are
-  composited on a 41×41, 1°-spaced, storm-relative patch and
-  diagnosed with the **pvtend** 5-basis decomposition
-  (`F_INT + F_DEF + F_PROP + LAP + I`). The deformation component
-  `F_DEF` is used to predict the hourly evolution of the
-  PV-anomaly ellipse (cyan) vs the observed ellipse (green), so
-  compression / extension of the major/minor axes plus rotation
-  can be read directly off `tilt_animation_C.gif`.
+  `DetectNodes` is run twice per LC: once with
+  `--searchbymax pv_anom_330 --thresholdcmd pv_anom_330,>,+0.1,0`
+  (cyclonic branch) and once with
+  `--searchbymin pv_anom_330 --thresholdcmd pv_anom_330,<,-0.1,0`
+  (anticyclonic branch). Both are restricted to
+  $35^\circ\text{N} \le \varphi \le 75^\circ\text{N}$ and merged
+  within 8&deg;. `StitchNodes` connects hourly nodes with
+  `--range 7.0 --mintime 90h --maxgap 6h`. `DetectBlobs` masks the
+  anomaly to areas &ge; $5\times 10^{5}$ km$^{2}$ for visualisation.
+  All constants live in [`scripts/_config.py`](scripts/_config.py).
+- **Top-6 selection** (`scripts/select_top6.py`) ranks tracks by
+  $\text{peak}\,|q'| \times \text{span}$ and trims the six survivors
+  to the common $[\max t_{\text{start}}, \min t_{\text{end}}]$ window
+  so every member contributes simultaneously.
+- **Fixed-latitude Lagrangian patch** (`scripts/build_composites.py`).
+  For each (track, hour) the 41&times;41 patch is sampled at
+  $(\lambda_0(t) + \Delta\lambda_j,\; 55^\circ\text{N} + \Delta\varphi_i)$
+  with $\Delta\lambda,\Delta\varphi \in [-20^\circ, +20^\circ]$ at
+  1&deg; spacing &mdash; so the patch translates zonally with the track
+  but its latitude is pinned to 35&ndash;75&deg;N. The 145-hour composite is
+  $\bar q_{ijk} = \text{nanmean}_{m}\, q(\lambda_0^{(m)}(t_k) +
+  \Delta\lambda_j,\, 55 + \Delta\varphi_i,\, t_k)$.
+- **5-basis decomposition** (`scripts/project_composite.py`).
+  `pvtend.compute_orthogonal_basis` builds the orthonormal basis
+  $\{F_{\text{INT}}, F_{\text{DEF}}, F_{\text{PROP}}, L, I\}$ from
+  $\bar q, \partial_x \bar q, \partial_y \bar q$ at the peak hour
+  (peak defined per polarity: $\operatorname*{argmax}_k \sum_{ij}
+  \max(\text{sgn}\cdot q'_a, 0)$). `project_field` returns the five
+  coefficients plus residual. `SYMMETRIZE=False` in `_config.py`
+  means the raw composite is used directly; set `True` to rotationally
+  average over 36 angles before projection.
+- **Tilt evolution &amp; 1 h ellipse forecast** (`scripts/tilt_evolution.py`).
+  At each hour we fit a covariance ellipse to $\max(\text{sgn}\cdot q'_a, 0)$
+  and define the tilt
+  $$
+  \theta(t) = \tfrac12 \operatorname{atan2}\!\bigl(2 C_{xy},\,
+  C_{xx} - C_{yy}\bigr),\qquad C = \frac{\sum w(\mathbf x-\bar{\mathbf x})
+  (\mathbf x-\bar{\mathbf x})^\top}{\sum w}.
+  $$
+  The predicted ellipse is obtained by advancing $\bar q \to
+  \bar q + \Delta t\,(F_{\text{INT}} + F_{\text{DEF}} +
+  F_{\text{PROP}} + L + I)$ over $\Delta t = 1$ h and recomputing
+  $\theta_{\text{pred}}$. The accumulated-angle figure
+  (`theta_tilt_accum_{C,AC}.png`) plots the cumulative unwrapped
+  $\sum \Delta\theta_{\text{obs}}$ (green) and cumulative
+  $\sum (\theta_{\text{pred}} - \theta_{\text{obs}})$ (cyan) versus
+  hour. Animations are written as MP4 (`FFMpegWriter`,
+  `yuv420p`) with lower-row PV-tendency and $F_{\text{DEF}}$
+  colourbars symmetrically clipped at the 95th percentile of
+  $|\cdot|$ for visual clarity.
 
 Large generated files (raw SpeedyWeather output, `processed.nc`,
 `pv330_anom.nc`, composites, blob NetCDFs, MP4s) are excluded via
 `.gitignore`; regenerate with `scripts/run_all.sh` plus the
 post-processing chain.
+
+### RWB recipe (from `processed.nc`)
+
+```bash
+cd /net/flood/data2/users/x_yan/barotropic_vorticity_model/thorncroft_rwb
+micromamba run -n blocking python scripts/prep_pv330_anom.py lc1 lc2
+bash scripts/run_tempest_pv330.sh lc1
+bash scripts/run_tempest_pv330.sh lc2
+micromamba run -n blocking python scripts/select_top6.py          # both polarities
+micromamba run -n blocking python scripts/export_track_csv.py
+micromamba run -n blocking python scripts/build_composites.py
+micromamba run -n blocking python scripts/project_composite.py
+micromamba run -n blocking python scripts/tilt_evolution.py
+micromamba run -n blocking python plotting/make_pv330_tracked_gif.py
+```
+
+Tunable constants live in [`scripts/_config.py`](scripts/_config.py):
+`PATCH_HALF`, `DX`, `CENTER_LAT`, `LAT_MIN/MAX`, `POS_THRESH`,
+`NEG_THRESH`, `AREA_MIN_KM2`, `MERGE_DIST_DEG`, `STITCH_RANGE_DEG`,
+`STITCH_MAXGAP`, `SPAN_REQ_H`, `JUMP_MAX_DEG_PER_H`, `TOP_N`,
+`N_COMPOSITE_HOURS`, `THETA_LEVEL`, `SYMMETRIZE`, `N_ROT`,
+`SMOOTHING_DEG`, `INCLUDE_LAP`, `ANIM_FPS`, `PCTL_CBAR`,
+`DT_PRED_HOURS`.
 
 ## Layout
 

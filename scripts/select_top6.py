@@ -1,34 +1,33 @@
 """Select top-6 PV-anom tracks per LC on the 330 K isentrope.
 
-Replaces the earlier vor250 selection.  Input file produced by
-``run_tempest_pv330.sh`` is ``tracks_max_pv330.txt``.
+Processes both polarities:
+  C  (cyclonic):     tracks_max_pv330.txt -> tracks_max_top6_pv330.txt
+  AC (anticyclonic): tracks_min_pv330.txt -> tracks_min_top6_pv330.txt
 
 Criteria:
   1. Track span (last.time - first.time) >= SPAN_REQ_H (default 90 h).
-     Tracks may start or end anywhere inside the day-6 -> day-13
-     window.
-  2. Max hourly great-circle displacement <= JUMP_MAX_DEG (5.0 deg).
+  2. Max hourly great-circle displacement <= JUMP_MAX_DEG (5 deg/h).
   3. Rank surviving tracks by mean |pv_anom_330| desc, keep top 6.
   4. Trim selected tracks to a common time window so all top-6 tracks
-      start/end at the same timestamps.
-
-Output: outputs/<lc>/tracks/tracks_max_top6_pv330.txt
+     start/end at the same timestamps.
 """
 from __future__ import annotations
 import sys
 import itertools
+import argparse
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 from track_utils import parse_stitchnodes  # noqa
+import _config as CFG  # noqa
 
 ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
             "thorncroft_rwb/outputs")
 
-SPAN_REQ_H = 90.0
-JUMP_MAX_DEG = 5.0   # deg/hr; matches StitchNodes --range in run_tempest_pv330.sh   # max great-circle deg between consecutive hourly nodes
+SPAN_REQ_H = CFG.SPAN_REQ_H
+JUMP_MAX_DEG = CFG.JUMP_MAX_DEG_PER_H   # deg/h; matches StitchNodes --range
 
 
 def great_circle_deg(lon1, lat1, lon2, lat2):
@@ -116,9 +115,10 @@ def choose_best_six(scored_tracks):
     return list(best_combo)
 
 
-def select(lc):
-    src = ROOT / lc / "tracks" / "tracks_max_pv330.txt"
-    dst = ROOT / lc / "tracks" / "tracks_max_top6_pv330.txt"
+def select(lc, polarity="C"):
+    tag = "max" if polarity == "C" else "min"
+    src = ROOT / lc / "tracks" / f"tracks_{tag}_pv330.txt"
+    dst = ROOT / lc / "tracks" / f"tracks_{tag}_top6_pv330.txt"
     all_tr = parse_stitchnodes(src)
     qual, rejected_span, rejected_jump = [], 0, 0
     for tr in all_tr:
@@ -142,7 +142,7 @@ def select(lc):
     top, common_t0, common_t1 = trim_to_common_window(top_raw)
     write_tracks(top, dst)
 
-    print(f"[{lc}] {len(all_tr)} raw -> span>={SPAN_REQ_H:.0f}h & "
+    print(f"[{lc}:{polarity}] {len(all_tr)} raw -> span>={SPAN_REQ_H:.0f}h & "
           f"jump<={JUMP_MAX_DEG:.1f}\u00b0/h -> {len(qual)} qual -> "
           f"{len(top)} top6 (rejected: span={rejected_span}, "
           f"jump={rejected_jump})")
@@ -160,5 +160,11 @@ def select(lc):
 
 
 if __name__ == "__main__":
-    for lc in sys.argv[1:] or ("lc1", "lc2"):
-        select(lc)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
+    ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
+    args = ap.parse_args()
+    pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
+    for lc in args.lcs:
+        for pol in pols:
+            select(lc, polarity=pol)

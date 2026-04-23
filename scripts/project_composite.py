@@ -1,25 +1,29 @@
-"""Rotation-symmetrized 5-basis decomposition of the cyclone composite.
+"""5-basis orthogonal decomposition of the cyclone/anticyclone composite.
 
-Peak hour t* = argmax_t sum(q'(t)>0).
+For each polarity (C or AC), the peak hour t* is the frame that
+maximises the appropriate mass integral:
 
-At t*, both q and q' are symmetrized by averaging 36 rotations
-(10 deg step) about the patch center (0,0), giving a near
-axisymmetric field.  PV gradients are recomputed from the
-symmetrized q via np.gradient (so prenorm / smoothing / Gram-
-Schmidt all consume the symmetric version). The resulting basis
-has Φ1 circular, Φ2/Φ3 dipoles, Φ4/Φ5 quadrupoles.
+    C:  t* = argmax_t   sum( max(+q'(t), 0) )   (strongest positive lobe)
+    AC: t* = argmax_t   sum( max(-q'(t), 0) )   (strongest negative lobe)
 
-The un-symmetrized pv_dt at t* is projected onto this symmetric
-basis to produce the 5-component decomposition.
+If ``SYMMETRIZE`` is True (``_config.SYMMETRIZE``) both the full PV
+and the anomaly at t* are symmetrized via ``N_ROT = 36`` rotation
+averages before the basis is computed; otherwise the raw fields at
+t* are used directly.
 
-Outputs (per LC, cyclone only):
-  decomp_C.png        2x3 panel (top: total pv_dt | recon | resid;
-                                 bot: int | prop | def).
-  decomp_bases_C.png  1x5 panel showing the symmetric Φ1..Φ5.
+The pvtend orthogonal basis is computed with
+    mask = "> 0"    for C
+    mask = "< 0"    for AC
+and ``center_lat = 55 N``.  The un-symmetrized pv_dt at t* is then
+projected to produce the 5-component decomposition.
+
+Outputs (per LC, per polarity):
+  projections/plots/decomp_{C,AC}.png        2x3 panel
+  projections/plots/decomp_bases_{C,AC}.png  1x5 basis panel
 """
 from __future__ import annotations
-import shutil
 import sys
+import argparse
 from pathlib import Path
 import numpy as np
 import xarray as xr
@@ -27,26 +31,27 @@ from scipy.ndimage import rotate as nd_rotate
 import matplotlib.pyplot as plt
 import pvtend
 
+sys.path.insert(0, str(Path(__file__).parent))
+import _config as CFG  # noqa
+
 ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
             "thorncroft_rwb/outputs")
-DX = 1.0
-CENTER_LAT = 50.0
 M_PER_DEG = 111_000.0
-N_ROT = 36  # 360/10 deg
 
 
-def rot_avg(field: np.ndarray) -> np.ndarray:
-    """Average over 36 rotations of 10 deg about patch center."""
+def rot_avg(field: np.ndarray, n_rot: int = CFG.N_ROT) -> np.ndarray:
+    """Average over ``n_rot`` equally-spaced rotations of ``field``."""
     out = np.zeros_like(field, dtype="float64")
-    for k in range(N_ROT):
-        ang = k * (360.0 / N_ROT)
+    for k in range(n_rot):
+        ang = k * (360.0 / n_rot)
         out += nd_rotate(field, ang, reshape=False, order=1,
                          mode="nearest")
-    return out / N_ROT
+    return out / n_rot
 
 
-def process(lc: str):
-    ds = xr.open_dataset(ROOT / lc / "composites" / "C_composite.nc")
+def process(lc: str, polarity: str = "C"):
+    ds = xr.open_dataset(ROOT / lc / "composites" /
+                         f"{polarity}_composite.nc")
     q = ds["pv_composite"].values.astype("float64")
     t_hour = ds["t"].values
     x_rel = ds["x"].values.astype("float64")
@@ -56,43 +61,49 @@ def process(lc: str):
 
     # pv_dt via centered difference on raw composite
     pv_dt = np.full_like(qa, np.nan)
-    pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * 3600.0)
+    pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * CFG.DT_PRED_HOURS * 3600.0)
+    # note DT_PRED_HOURS=1 → 2*3600 s stencil for centered difference
 
-    # Peak hour by total positive anomaly mass
-    pos_sum = np.nansum(np.where(qa > 0, qa, 0.0), axis=(1, 2))
-    pos_sum[~np.isfinite(pos_sum)] = -np.inf
-    pos_sum[0] = pos_sum[-1] = -np.inf
-    # Restrict candidate peak hours to frames where pv_dt is finite.
-    valid_dt = np.isfinite(pv_dt).all(axis=(1, 2))
-    valid_idx = np.where(valid_dt)[0]
-    if valid_idx.size == 0:
-        print(f"[{lc}] no fully finite pv_dt frame; skipping projection")
-        return
-    pos_sel = pos_sum.copy()
-    pos_sel[~valid_dt] = -np.inf
-    if np.all(~np.isfinite(pos_sel)):
-        i0 = int(valid_idx[len(valid_idx) // 2])
+    # Peak hour: polarity-specific mass integral
+    if polarity == "C":
+        mass = np.nansum(np.where(qa > 0, qa, 0.0), axis=(1, 2))
+        mask_str = "> 0"
     else:
-        i0 = int(np.argmax(pos_sel))
+        mass = np.nansum(np.where(qa < 0, -qa, 0.0), axis=(1, 2))
+        mask_str = "< 0"
+    mass[~np.isfinite(mass)] = -np.inf
+    mass[0] = mass[-1] = -np.inf
+    valid_dt = np.isfinite(pv_dt).all(axis=(1, 2))
+    if not valid_dt.any():
+        print(f"[{lc}:{polarity}] no fully finite pv_dt frame; skipping")
+        return
+    mass_sel = mass.copy()
+    mass_sel[~valid_dt] = -np.inf
+    i0 = int(np.argmax(mass_sel))
 
-    # Symmetrize BOTH q and q' at the peak hour
-    q_sym = rot_avg(q[i0])
-    qa_sym = rot_avg(qa[i0])
+    # q and qa at peak hour (optionally rotation-symmetrized)
+    if CFG.SYMMETRIZE:
+        q_peak = rot_avg(q[i0])
+        qa_peak = rot_avg(qa[i0])
+        basis_note = f"rotation-symmetrized ({CFG.N_ROT}×10°)"
+    else:
+        q_peak = q[i0]
+        qa_peak = qa[i0]
+        basis_note = "raw peak-hour field"
 
-    # Recompute gradients from the symmetrized q (axisymmetric ->
-    # gradients are radial/orthoradial)
-    dx_m = DX * M_PER_DEG * np.cos(np.deg2rad(CENTER_LAT))
-    dy_m = DX * M_PER_DEG
-    qdy_sym, qdx_sym = np.gradient(q_sym, dy_m, dx_m, edge_order=2)
+    dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
+    dy_m = CFG.DX * M_PER_DEG
+    qdy_peak, qdx_peak = np.gradient(q_peak, dy_m, dx_m, edge_order=2)
 
     basis = pvtend.compute_orthogonal_basis(
-        qa_sym, qdx_sym, qdy_sym, x_rel, y_rel,
-        mask="> 0", apply_smoothing=True, smoothing_deg=3.0,
-        grid_spacing=DX, center_lat=CENTER_LAT, include_lap=False,
+        qa_peak, qdx_peak, qdy_peak, x_rel, y_rel,
+        mask=mask_str,
+        apply_smoothing=True, smoothing_deg=CFG.SMOOTHING_DEG,
+        grid_spacing=CFG.DX, center_lat=CFG.CENTER_LAT,
+        include_lap=CFG.INCLUDE_LAP,
     )
 
-    # Project the un-symmetrized pv_dt at t* onto the symmetric basis
-    proj = pvtend.project_field(pv_dt[i0], basis, grid_spacing=DX)
+    proj = pvtend.project_field(pv_dt[i0], basis, grid_spacing=CFG.DX)
 
     total = pv_dt[i0]
     recon = proj["recon"]; resid = proj["resid"]
@@ -101,7 +112,7 @@ def process(lc: str):
     r1 = np.nanmax(np.abs([total, recon, resid]))
     r2 = np.nanmax(np.abs([integ, prop, deform]))
 
-    # ---- decomp_C.png (2x3) ----
+    # ---- decomp_{C,AC}.png (2x3) ----
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 8),
                              constrained_layout=True)
     X, Y = np.meshgrid(x_rel, y_rel)
@@ -131,18 +142,17 @@ def process(lc: str):
     coef = (f"β={proj['beta']:.2e}  ax={proj['ax']:.2e}  "
             f"ay={proj['ay']:.2e}  γ1={proj['gamma1']:.2e}  "
             f"γ2={proj['gamma2']:.2e}  RMSE={proj.get('rmse', np.nan):.2e}")
-    fig.suptitle(f"{lc.upper()}  cyclone Lagrangian composite  "
-                 f"t={int(t_hour[i0])}h — rotation-symmetrized "
-                 f"basis ({N_ROT}x10°)\n{coef}", fontsize=11)
+    fig.suptitle(
+        f"{lc.upper()}  {polarity}  Lagrangian composite  "
+        f"t={int(t_hour[i0])}h — {basis_note}\n{coef}",
+        fontsize=11)
 
     plots = ROOT / lc / "projections" / "plots"
-    scripts_dir = ROOT / lc / "projections" / "scripts"
     plots.mkdir(parents=True, exist_ok=True)
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    out = plots / "decomp_C.png"
+    out = plots / f"decomp_{polarity}.png"
     fig.savefig(out, dpi=140); plt.close(fig)
 
-    # ---- decomp_bases_C.png (1x5) : show symmetric Φ1..Φ5 ----
+    # ---- decomp_bases_{C,AC}.png (1x5) : show Φ1..Φ5 ----
     phis = [basis.phi_int, basis.phi_dx, basis.phi_dy,
             basis.phi_def, basis.phi_strain]
     labels = [r"$\phi_1$  (int, circular)",
@@ -165,17 +175,22 @@ def process(lc: str):
     fig.colorbar(last, ax=axs, shrink=0.85,
                  label="basis amplitude (prenorm units)")
     fig.suptitle(
-        f"{lc.upper()}  rotation-symmetrized orthogonal basis Φ1..Φ5 "
-        f"at t*={int(t_hour[i0])}h ({N_ROT}×10°, mask q'>0, "
-        f"include_lap=False)", fontsize=12)
-    out_b = plots / "decomp_bases_C.png"
+        f"{lc.upper()}  {polarity} orthogonal basis Φ1..Φ5 at "
+        f"t*={int(t_hour[i0])}h ({basis_note}, mask q' {mask_str}, "
+        f"include_lap={CFG.INCLUDE_LAP})", fontsize=12)
+    out_b = plots / f"decomp_bases_{polarity}.png"
     fig.savefig(out_b, dpi=140); plt.close(fig)
 
-    shutil.copy2(Path(__file__).resolve(),
-                 scripts_dir / Path(__file__).name)
-    print(f"[{lc}] wrote {out} and {out_b}  (peak t={int(t_hour[i0])}h)")
+    print(f"[{lc}:{polarity}] wrote {out} and {out_b}  "
+          f"(peak t={int(t_hour[i0])}h)")
 
 
 if __name__ == "__main__":
-    for lc in sys.argv[1:] or ("lc1", "lc2"):
-        process(lc)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
+    ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
+    args = ap.parse_args()
+    pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
+    for lc in args.lcs:
+        for pol in pols:
+            process(lc, polarity=pol)
