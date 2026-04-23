@@ -1,10 +1,8 @@
-"""Animate the winning-method anomaly field with its C/AC tracks.
+"""Animate each method's anomaly field with its C/AC tracks overlaid.
 
-Reads winner from outputs/<lc>/projections/winner.json, then animates
-the method's anomaly (e.g. q'_{330K}, ζ'_{250 hPa}, or θ'@2 PVU) with
-overlaid top-6 C (blue) and AC (orange) tracks over the day-6..10 window.
-
-Writes: outputs/<lc>/plots/<method>_tracked.mp4   (mp4 only, no gif)
+For every (LC, method) renders one mp4 in outputs/<lc>/plots/<method>_tracked.mp4.
+All 3 methods are rendered by default so the user can visually compare them;
+the winner from compare_methods.py is *not* singled out.
 """
 from __future__ import annotations
 import sys
@@ -43,14 +41,9 @@ def _cbar_label(method: str) -> str:
     }.get(method, "anomaly")
 
 
-def animate(lc: str, method: str | None = None, stride: int = 1,
+def animate(lc: str, method: str, stride: int = 1,
             trail_hours: int = 24):
     out_dir = ROOT / "outputs" / lc
-    if method is None:
-        wf = out_dir / "projections" / "winner.json"
-        if not wf.exists():
-            raise FileNotFoundError(f"missing {wf} — run compare_methods.py")
-        method = json.loads(wf.read_text())["winner"]
     spec = CFG.METHOD[method]
 
     ds = xr.open_dataset(out_dir / spec["input_nc"])
@@ -142,10 +135,6 @@ def animate(lc: str, method: str | None = None, stride: int = 1,
     anim = FuncAnimation(fig, draw, frames=frames, interval=120, blit=False)
     out_plots = out_dir / "plots"
     out_plots.mkdir(parents=True, exist_ok=True)
-    # Clean stale animations so exactly one mp4 remains per LC.
-    for f in out_plots.iterdir():
-        if f.suffix in (".mp4", ".gif"):
-            f.unlink()
     mp4_path = out_plots / f"{method}_tracked.mp4"
     print(f"[anim] writing {mp4_path}  ({len(frames)} frames)")
     anim.save(mp4_path, writer=FFMpegWriter(fps=CFG.ANIM_FPS, bitrate=2400))
@@ -157,7 +146,9 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
-    ap.add_argument("--method", default=None, help="override winner")
+    ap.add_argument("--methods", nargs="*", default=list(CFG.METHODS),
+                    help="Which methods to animate (default: all 3).")
     args = ap.parse_args()
     for lc in args.lcs:
-        animate(lc, method=args.method)
+        for m in args.methods:
+            animate(lc, method=m)

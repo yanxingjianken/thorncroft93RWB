@@ -106,13 +106,28 @@ def process(lc: str, method: str, polarity: str = "C"):
         return im
 
     im1 = _panel(axes[0, 0], total, r1, r"$\partial q/\partial t$")
-    # overlay strict ellipse mask used downstream as a black dashed contour
+    # overlay the central-component ellipse mask (connected component
+    # containing, or closest to, the patch origin).
+    from scipy import ndimage as ndi
     fit_thr = float(CFG.METHOD[method]["mask_thresh"])
+    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
     if polarity == "C":
-        mask_field = qa_anchor - fit_thr
+        raw_m = qa_anchor > fit_thr
     else:
-        mask_field = -qa_anchor - fit_thr
-    axes[0, 0].contour(X, Y, mask_field, levels=[0.0],
+        raw_m = qa_anchor < -fit_thr
+    raw_m &= (np.sqrt(X * X + Y * Y) <= guard_r)
+    if raw_m.any():
+        labs, nlab = ndi.label(raw_m)
+        if nlab > 1:
+            iy0 = int(np.argmin(np.abs(Y[:, 0])))
+            ix0 = int(np.argmin(np.abs(X[0, :])))
+            centre_lbl = labs[iy0, ix0]
+            if centre_lbl == 0:
+                cs = ndi.center_of_mass(raw_m, labs, range(1, nlab + 1))
+                ds_ = [np.hypot(cy - iy0, cx - ix0) for cy, cx in cs]
+                centre_lbl = int(np.argmin(ds_)) + 1
+            raw_m = labs == centre_lbl
+    axes[0, 0].contour(X, Y, raw_m.astype(float), levels=[0.5],
                        colors="k", linewidths=1.2, linestyles="--")
     _panel(axes[0, 1], recon, r1, "reconstruction")
     _panel(axes[0, 2], resid, r1, "residual")

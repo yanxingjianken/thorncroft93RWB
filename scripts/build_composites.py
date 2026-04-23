@@ -39,6 +39,37 @@ def _sort_lat(da):
     return da
 
 
+def _pad_periodic_lon(da: xr.DataArray) -> xr.DataArray:
+    """Extend the DataArray along lon so it is a valid periodic grid for
+    xarray linear interpolation across the 0/360 seam.
+
+    Prepends one point at lon=lon[-1]-360 and appends one at lon[0]+360.
+    """
+    lon = da["lon"].values
+    # Assume monotonic increasing after _sort_lat; longitudes may be 0..359.
+    left = da.isel(lon=[-1]).assign_coords(lon=[float(lon[-1]) - 360.0])
+    right = da.isel(lon=[0]).assign_coords(lon=[float(lon[0]) + 360.0])
+    return xr.concat([left, da, right], dim="lon")
+
+
+def _pole_reflect_coords(lat_q: np.ndarray, lon_q: np.ndarray):
+    """Reflect latitudes that overshoot the poles.
+
+    Going past the North Pole by delta along longitude L is the same as
+    being at (90-delta) along longitude (L+180). Symmetric for south
+    pole. Returns (lat_q_ref, lon_q_ref) as 1-D arrays.
+    """
+    lat_r = lat_q.copy()
+    lon_r = lon_q.copy()
+    over_n = lat_r > 90.0
+    lat_r[over_n] = 180.0 - lat_r[over_n]
+    lon_r[over_n] = (lon_r[over_n] + 180.0) % 360.0
+    over_s = lat_r < -90.0
+    lat_r[over_s] = -180.0 - lat_r[over_s]
+    lon_r[over_s] = (lon_r[over_s] + 180.0) % 360.0
+    return lat_r, lon_r
+
+
 def build(lc: str, method: str, polarity: str = "C"):
     spec = CFG.METHOD[method]
     out_dir = ROOT / lc
@@ -67,6 +98,15 @@ def build(lc: str, method: str, polarity: str = "C"):
     track_lon = np.full((n_members, n_hours), np.nan, dtype="float32")
     track_lat = np.full((n_members, n_hours), np.nan, dtype="float32")
 
+    # Pre-extend source grids periodically in lon so we can interpolate
+    # across the 0/360 seam without NaNs.
+    total_pad = _pad_periodic_lon(total)
+    anom_pad = _pad_periodic_lon(anom)
+
+    # 2-D sample grid relative to the track centre.
+    # (n_y, n_x): row = lat offset, col = lon offset.
+    Xrel2d, Yrel2d = np.meshgrid(x_rel, y_rel)
+
     for tid, grp in csv.groupby("track_id"):
         tid_i = int(tid)
         if tid_i >= n_members:
@@ -77,15 +117,26 @@ def build(lc: str, method: str, polarity: str = "C"):
             ihour = int((t_target - win_start).total_seconds() / 3600)
             if ihour < 0 or ihour >= n_hours:
                 continue
-            lon_q = xr.DataArray((row["lon"] + x_rel) % 360.0, dims="x")
-            lat_q = xr.DataArray(row["lat"] + y_rel, dims="y")
+            lat_samp = float(row["lat"]) + Yrel2d             # (ny, nx)
+            lon_samp = (float(row["lon"]) + Xrel2d) % 360.0
+            lat_samp_ref, lon_samp_ref = _pole_reflect_coords(
+                lat_samp.ravel(), lon_samp.ravel())
+            lat_da = xr.DataArray(lat_samp_ref, dims="p")
+            lon_da = xr.DataArray(lon_samp_ref, dims="p")
             ti = int(np.argmin(np.abs(times - np.datetime64(t_target))))
-            members_total[tid_i, ihour] = total.isel(time=ti).interp(
-                lat=lat_q, lon=lon_q, method="linear"
-            ).values.astype("float32")
-            members_anom[tid_i, ihour] = anom.isel(time=ti).interp(
-                lat=lat_q, lon=lon_q, method="linear"
-            ).values.astype("float32")
+            try:
+                patch_total = total_pad.isel(time=ti).interp(
+                    lat=lat_da, lon=lon_da, method="linear"
+                ).values.reshape(ny, nx).astype("float32")
+                patch_anom = anom_pad.isel(time=ti).interp(
+                    lat=lat_da, lon=lon_da, method="linear"
+                ).values.reshape(ny, nx).astype("float32")
+            except Exception as exc:
+                print(f"  [{lc}:{method}:{polarity} tid={tid_i} "
+                      f"ihour={ihour}] interp failed: {exc}")
+                continue
+            members_total[tid_i, ihour] = patch_total
+            members_anom[tid_i, ihour] = patch_anom
             track_lon[tid_i, ihour] = float(row["lon"])
             track_lat[tid_i, ihour] = float(row["lat"])
 

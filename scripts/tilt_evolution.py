@@ -24,6 +24,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 from matplotlib.animation import FuncAnimation, FFMpegWriter
+from scipy import ndimage as ndi
 import pvtend
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -46,13 +47,45 @@ def _fill(F: np.ndarray) -> np.ndarray:
 def _strict_mask(anom: np.ndarray, polarity: str, thr: float,
                  X: np.ndarray, Y: np.ndarray,
                  guard_radius: float) -> np.ndarray:
-    """Signed-anomaly mask AND inside guard circle."""
+    """Signed-anomaly mask AND inside guard circle, restricted to the
+    connected component containing (or closest to) the patch centre.
+
+    The simple signed threshold often lights up several disjoint blobs
+    inside the patch — adjacent eddies and trough/ridge pairs are
+    frequent along the jet. For tilt fitting we want the *central*
+    coherent vortex only. Policy:
+      1. signed threshold
+      2. mask outside guard circle (radius ``guard_radius``)
+      3. label connected components (4-connectivity)
+      4. keep the component that contains the patch origin (0, 0); if
+         none does, keep the component whose centroid is closest to
+         the origin.
+    """
     if polarity == "C":
         m = anom > thr
     else:
         m = anom < -thr
     rr = np.sqrt(X * X + Y * Y)
-    return m & (rr <= guard_radius)
+    m = m & (rr <= guard_radius)
+    if not m.any():
+        return m
+    labels, n = ndi.label(m)
+    if n <= 1:
+        return m
+    # find pixel index closest to (0,0) inside the mask
+    ny, nx = m.shape
+    # assume uniform grid centred on zero
+    iy0 = int(np.argmin(np.abs(Y[:, 0])))
+    ix0 = int(np.argmin(np.abs(X[0, :])))
+    centre_lbl = labels[iy0, ix0]
+    if centre_lbl != 0:
+        keep = centre_lbl
+    else:
+        # no component covers origin → take nearest centroid
+        centroids = ndi.center_of_mass(m, labels, range(1, n + 1))
+        dists = [np.hypot(cy - iy0, cx - ix0) for cy, cx in centroids]
+        keep = int(np.argmin(dists)) + 1
+    return labels == keep
 
 
 def _fit_ellipse(mask: np.ndarray, weights: np.ndarray,
@@ -166,6 +199,7 @@ def process(lc: str, method: str, polarity: str = "C"):
     a_pred = np.full(nt, np.nan); b_pred = np.full(nt, np.nan)
     xc_pred = np.full(nt, np.nan); yc_pred = np.full(nt, np.nan)
     deform_field = np.full_like(q, np.nan)   # -gamma1*phi4 - gamma2*phi5
+    mask_frames = np.zeros_like(q, dtype=bool)  # central-component mask
 
     for i in range(nt):
         qai = qa[i]
@@ -176,6 +210,7 @@ def process(lc: str, method: str, polarity: str = "C"):
         m = _strict_mask(qai, polarity, fit_thr, X, Y, guard_r)
         if m.sum() < 8:
             continue
+        mask_frames[i] = m
         th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y)
         theta_obs[i] = th; a_obs[i] = a_; b_obs[i] = b_
         xc_obs[i] = xcc; yc_obs[i] = ycc
@@ -262,7 +297,7 @@ def process(lc: str, method: str, polarity: str = "C"):
 
     # ----- 4-panel animation
     _make_animation(lc, method, polarity, q, qa, pv_dt, deform_field,
-                    X, Y, x_rel, y_rel,
+                    mask_frames, X, Y, x_rel, y_rel,
                     t_hour, theta_obs, a_obs, b_obs, xc_obs, yc_obs,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
                     fit_thr, guard_r, mask_str, dx_m, dy_m, plots)
@@ -277,7 +312,7 @@ def _ellipse_axis_endpoints(xc, yc, a, theta_deg):
 
 
 def _make_animation(lc, method, polarity,
-                    q, qa, pv_dt, deform_field,
+                    q, qa, pv_dt, deform_field, mask_frames,
                     X, Y, x_rel, y_rel, t_hour,
                     theta_obs, a_obs, b_obs, xc_obs, yc_obs,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
@@ -293,8 +328,28 @@ def _make_animation(lc, method, polarity,
         np.abs(deform_field[np.isfinite(deform_field)]), pct)
         if np.isfinite(deform_field).any() else vmax_dt)
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 9), constrained_layout=True)
+    fig, axes = plt.subplots(2, 2, figsize=(12.5, 10), constrained_layout=True)
     (ax_ul, ax_ur), (ax_ll, ax_lr) = axes
+
+    # Static colorbars (one per panel) — created from dummy ScalarMappables
+    # so they don't get cleared when ax.clear() is called each frame.
+    from matplotlib import cm, colors as mcolors
+    norm_q   = mcolors.Normalize(-vmax_q,   vmax_q)
+    norm_qa  = mcolors.Normalize(-vmax_qa,  vmax_qa)
+    norm_dt  = mcolors.Normalize(-vmax_dt,  vmax_dt)
+    norm_def = mcolors.Normalize(-vmax_def, vmax_def)
+    sm_q   = cm.ScalarMappable(norm=norm_q,   cmap="RdBu_r")
+    sm_qa  = cm.ScalarMappable(norm=norm_qa,  cmap="RdBu_r")
+    sm_dt  = cm.ScalarMappable(norm=norm_dt,  cmap="RdBu_r")
+    sm_def = cm.ScalarMappable(norm=norm_def, cmap="RdBu_r")
+    fig.colorbar(sm_q,   ax=ax_ul, shrink=0.82, pad=0.02,
+                 label=f"q ({method})")
+    fig.colorbar(sm_qa,  ax=ax_ur, shrink=0.82, pad=0.02,
+                 label="q'")
+    fig.colorbar(sm_dt,  ax=ax_ll, shrink=0.82, pad=0.02,
+                 label=r"$\partial q/\partial t$")
+    fig.colorbar(sm_def, ax=ax_lr, shrink=0.82, pad=0.02,
+                 label=r"$-\gamma_1\phi_4 - \gamma_2\phi_5$")
 
     def _frame(i):
         for ax in axes.flat:
@@ -314,20 +369,17 @@ def _make_animation(lc, method, polarity,
         except Exception:
             pass
         ax_ur.set_title(f"q' shading + q contour")
-        # LL: pv_dt with strict mask as black dashed contour
+        # LL: pv_dt with central-component mask as black dashed contour
         if np.isfinite(pv_dt[i]).any():
             ax_ll.pcolormesh(X, Y, pv_dt[i], cmap="RdBu_r",
                              vmin=-vmax_dt, vmax=vmax_dt, shading="auto")
-        if polarity == "C":
-            mfield = qa[i] - fit_thr
-        else:
-            mfield = -qa[i] - fit_thr
         try:
-            ax_ll.contour(X, Y, mfield, levels=[0.0], colors="k",
+            ax_ll.contour(X, Y, mask_frames[i].astype(float),
+                          levels=[0.5], colors="k",
                           linewidths=1.2, linestyles="--")
         except Exception:
             pass
-        ax_ll.set_title(r"$\partial q/\partial t$ + mask")
+        ax_ll.set_title(r"$\partial q/\partial t$ + central-blob mask")
         # LR: deformation tendency  -gamma1*phi4 - gamma2*phi5
         if np.isfinite(deform_field[i]).any():
             ax_lr.pcolormesh(X, Y, deform_field[i], cmap="RdBu_r",

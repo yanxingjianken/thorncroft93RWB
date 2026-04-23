@@ -85,13 +85,10 @@ def pick_winner(lc: str, force: str | None = None) -> dict:
     winner_file = proj_dir / "winner.json"
     winner_file.write_text(json.dumps(payload, indent=2))
 
-    # symlink best/ -> <winner>/plots
-    best_link = proj_dir / "best"
-    target = Path(winner) / "plots"
-    if best_link.exists() or best_link.is_symlink():
-        best_link.unlink()
-    best_link.symlink_to(target, target_is_directory=True)
     tag = " (forced)" if forced else ""
+    # NOTE: we deliberately do NOT symlink projections/best any more —
+    # all 3 methods' outputs should be kept visible side-by-side for
+    # manual comparison. The winner.json file is purely informational.
     print(f"[{lc}] winner={winner}{tag}  scores="
           f"{ {m: round(scores[m]['score_total'], 3) for m in scores} }")
     return payload

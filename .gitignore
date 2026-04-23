@@ -14,9 +14,8 @@ outputs/**/tracks/**/*.nc
 outputs/**/tracks/**/*.log
 outputs/**/tracks/**/cand_*.txt
 outputs/**/projections/**/data/*.npz
-outputs/**/projections/**/*.mp4
-outputs/**/plots/*.mp4
-outputs/**/mp4/
+# v2.3.1: commit all small mp4s directly to GitHub (≤6 MB each, ~85 MB total).
+# Keep NetCDFs / raw data excluded above; mp4s are preserved.
 outputs/**/logs/
 outputs/**/projections/scripts/
 

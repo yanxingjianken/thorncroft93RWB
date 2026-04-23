@@ -2,28 +2,28 @@
   "lc": "lc1",
   "winner": "zeta250",
   "auto_winner": "zeta250",
-  "forced": true,
+  "forced": false,
   "methods": {
     "pv330": {
-      "score_C_mean_abs_deg": 6.923034569170775,
-      "score_AC_mean_abs_deg": 3.0368834142283676,
+      "score_C_mean_abs_deg": 2.9621510004613243,
+      "score_AC_mean_abs_deg": 3.1619073345488458,
       "n_C": 91,
       "n_AC": 5,
-      "score_total": 9.959917983399142
+      "score_total": 6.1240583350101705
     },
     "zeta250": {
-      "score_C_mean_abs_deg": 1.502314503953077,
-      "score_AC_mean_abs_deg": 1.2935865762479102,
+      "score_C_mean_abs_deg": 0.5319508053502368,
+      "score_AC_mean_abs_deg": 0.32678897168970383,
       "n_C": 89,
       "n_AC": 95,
-      "score_total": 2.795901080200987
+      "score_total": 0.8587397770399405
     },
     "theta_pv2": {
-      "score_C_mean_abs_deg": 5.647198284648501,
-      "score_AC_mean_abs_deg": 13.284728146373899,
-      "n_C": 51,
-      "n_AC": 80,
-      "score_total": 18.9319264310224
+      "score_C_mean_abs_deg": 15.13076294977605,
+      "score_AC_mean_abs_deg": 20.921537157703135,
+      "n_C": 48,
+      "n_AC": 73,
+      "score_total": 36.052300107479184
     }
   },
   "metric": "mean |\u0394\u03b8_obs - \u0394\u03b8_pred| per step, wrapped to (-90,90]"

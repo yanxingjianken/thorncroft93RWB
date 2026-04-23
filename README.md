@@ -143,16 +143,44 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.3 — 3-method comparator + per-LC window)
+## Workflow (v2.3.1 — 3-method comparator + per-LC window)
 
 For each LC the *circular-vortex* segment of the simulation is tracked
 with **three independent TempestExtremes pipelines** (PV-anomaly on
 330 K, relative-vorticity anomaly on 250 hPa, and θ-deviation on the
 2 PVU surface). All three feed identical Lagrangian composite +
 5-basis decomposition + tilt-evolution machinery, and a final
-`compare_methods.py` step picks the method whose 1-h tilt forecast
-best aligns with the observed tilt evolution. A single mp4 of the
-winning method is rendered per LC.
+`compare_methods.py` step scores each method by how well its 1-h tilt
+forecast aligns with the observed tilt evolution. **All three methods'**
+`tracked.mp4` animations are rendered per LC so they can be compared
+visually — there is no symlinked "winner" directory. A
+`projections/winner.json` summary records the scores.
+
+**v2.3.1 fixes** on top of v2.3.0:
+
+1. **Center-blob ellipse fit** — `scripts/tilt_evolution.py::_strict_mask`
+   now connected-component-labels the signed-threshold mask and keeps
+   only the component that contains (or is closest to) the patch
+   origin. This fixes misaligned ellipses on `pv330` patches that
+   contained multiple disjoint PV-anomaly cells, and removes most of
+   the earlier LC2 AC θ/a/b/pv_dt jumps which were caused by the
+   ellipse snapping onto an adjacent blob.
+2. **Pole reflection** — `scripts/build_composites.py` now reflects
+   sample points that overshoot the pole via
+   $(\lambda, \phi) \to (\lambda + 180^{\circ}, 180^{\circ} - \phi)$,
+   so LC2 tracks that push the ±40° patch north of 90°N no longer
+   leave NaN gashes.
+3. **Periodic lon extension** — the source field is padded with one
+   duplicate column on each side (at `lon[0]-360` and `lon[-1]+360`)
+   before `xarray.interp`, so patches that straddle the 0°/360°
+   meridian no longer NaN at the seam.
+4. **No winner symlink** — `scripts/compare_methods.py` keeps
+   `winner.json` but no longer creates `projections/best`, since we
+   render all 3 methods' tracked mp4s for side-by-side comparison.
+5. **Per-panel colorbars** — each of the 4 panels in
+   `tilt_animation_{C,AC}.mp4` now has its own colorbar, and
+   `decomp_{C,AC}.png` uses the central-component mask for the black
+   dashed contour overlay.
 
 **Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
 - `lc1` → day **6 → 10** (hours 144..240)
@@ -160,9 +188,9 @@ winning method is rendered per LC.
 
 Each window covers 96 h → **97 hourly composite frames**. LC2 starts
 later because LC2's barotropic, circular vortex matures on day 8.
-The same comparator picks `zeta250` as the winning method for both
-LCs (use `--force zeta250` on `compare_methods.py` to lock that
-choice).
+The comparator scores all 3 methods (`pv330`, `zeta250`, `theta_pv2`)
+and picks `zeta250` as the best-aligned method for both LCs; the other
+two are still rendered so you can judge tilt evolution visually.
 
 ```mermaid
 graph TD
@@ -192,9 +220,9 @@ graph TD
     R --> S[projections/&lt;method&gt;/plots/<br/>theta_tilt_*.png, tilt_animation_*.mp4]
     R --> SD[projections/&lt;method&gt;/data/tilt_&#123;C,AC&#125;.npz]
     SD --> CMP[scripts/compare_methods.py<br/>min mean &#124;&Delta;&theta;_obs - &Delta;&theta;_pred&#124; per step]
-    CMP --> WIN[projections/winner.json + projections/best/]
-    WIN --> W[plotting/make_tracked_anim.py<br/>winner only, mp4 only]
-    W --> WPMP[outputs/&lt;lc&gt;/plots/&lt;winner&gt;_tracked.mp4]
+    CMP --> WIN[projections/winner.json]
+    O --> W[plotting/make_tracked_anim.py<br/>all 3 methods, mp4 only]
+    W --> WPMP[outputs/&lt;lc&gt;/plots/&lt;method&gt;_tracked.mp4<br/>&times; 3 methods]
 ```
 
 ### Three tracking methods (all evaluated, best-aligned wins)
@@ -216,17 +244,19 @@ overlap window before being trimmed to that window.
   in v2.3, so the basis sees the raw asymmetric onset blob.
 - **Ellipse fit** uses signed-anomaly mask (C: $q' > +\text{thr}$,
   AC: $q' < -\text{thr}$) AND a guard circle of radius
-  $\text{PATCH_HALF} - \text{GUARD_PAD_DEG} = 35^{\circ}$ to exclude
-  any tropical tail. Weighted-covariance second moments give
+  $\text{PATCH\_HALF} - \text{GUARD\_PAD\_DEG} = 35^{\circ}$, then
+  **restricted to the connected component containing (or closest to)
+  the patch origin** so adjacent eddies cannot pull the fit off the
+  central vortex. Weighted-covariance second moments give
   $(\theta, a, b, x_c, y_c)$, with $\theta \in [-90, 90)^{\circ}$.
   Major-axis line of length $2a$ at angle $\theta$ through
   $(x_c, y_c)$ is drawn on every animation frame (green = obs,
   cyan dashed = 1-h prediction).
 - **Method comparator** scores each method by mean wrap-aware
-  $|\Delta\theta_{\text{obs}} - \Delta\theta_{\text{pred}}|$ (C+AC),
-  picks the smallest, writes `projections/winner.json`, and
-  symlinks `projections/best/` to the winner's `plots/`. Only that
-  method's `tracked.mp4` is rendered.
+  $|\Delta\theta_{\text{obs}} - \Delta\theta_{\text{pred}}|$ (C+AC) and
+  writes `projections/winner.json`. All 3 methods' tracked mp4s are
+  rendered to `outputs/<lc>/plots/<method>_tracked.mp4` so you can
+  compare them side-by-side; no symlink is created.
 
 ## Reproducing Thorncroft 1993 RWB tracking
 
