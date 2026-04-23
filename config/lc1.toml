@@ -1,0 +1,74 @@
+# LC1 (Z1 basic state) — Thorncroft, Hoskins & McIntyre (1993, QJRMS)
+# Dry, frictionless PrimitiveDryModel. T95, 15 sigma levels.
+
+[grid]
+trunc = 95
+nlayers = 15
+# Full-level sigma values as given in Thorncroft et al. 1993 (from Hoskins &
+# Simmons 1975). Half-levels are derived in `init_conditions.jl` by
+# midpoint averaging with boundary values σ_half[1]=1, σ_half[end]=0.
+sigma_full = [0.967, 0.887, 0.784, 0.674, 0.569, 0.477, 0.400, 0.338,
+              0.287, 0.241, 0.197, 0.152, 0.106, 0.060, 0.018]
+
+[simulation]
+n_days = 16
+# smoke run: T31, 1 day
+smoke_trunc = 31
+smoke_days  = 1
+# Leapfrog Δt at T31 (linearly scaled to T95 at runtime). 15 min keeps
+# the solver well below CFL at T95 for both LC1 and LC2.
+dt_at_T31_minutes = 15
+
+[basic_state]
+# Z1: Jablonowski & Williamson (2006) analytical thermal-wind-balanced
+# mid-latitude jet — matches Thorncroft's Z1 characteristics:
+#   - peak zonal wind = 47 m/s
+#   - jet latitude ≈ 45°N
+#   - sloping tropopause (η₀ ≈ 0.252 puts jet at ~250 hPa)
+#   - near-zero surface wind
+# Thorncroft (1993) does not publish a closed-form equation; the paper
+# defers to Hoskins & Simmons (1975) / Simmons & Hoskins (1983). Using
+# J&W 2006 as the standard modern analogue is defensible and is
+# implemented in SpeedyWeather out-of-the-box (`ZonalWind`).
+u0 = 47.0
+eta0 = 0.252
+# Barotropic addition (Z2 only — zero for LC1).
+barotropic_add = false
+bt_amp = 0.0           # m/s
+bt_lat_west = 20.0     # °N, westerly peak
+bt_lat_east = 50.0     # °N, easterly peak
+bt_width    = 10.0     # ° Gaussian half-width
+
+[perturbation]
+# Wave-6 surface-pressure perturbation. Amplitude reduced from 1 mb →
+# 0.1 mb: a pure pressure bump without the matching balanced temperature
+# and wind fields radiates gravity waves (Hoskins & Simmons 1975,
+# appendix); 0.1 mb is small enough to avoid an "initial shock" yet still
+# projects onto the unstable normal mode that grows to finite amplitude
+# within a few days.
+zonal_wavenumber = 6
+# 1 mb matches Thorncroft et al. 1993 (§3). With the corrected ∇⁶
+# hyperdiffusion (power=3, time_scale=2 h) the integration is stable
+# through day 15. Reduce to 0.1 if a slower start is desired.
+amplitude_mb = 1.0
+envelope_lat = 45.0
+envelope_width = 15.0   # °
+
+[diffusion]
+# Internal ∇⁶ hyperdiffusion with ~2 h decay at n = trunc (shortest
+# retained scale), per Thorncroft (1993) §3 / Hoskins & Simmons (1975).
+# NOTE: SpeedyWeather's `HyperDiffusion.power` is the exponent n of the
+# Laplacian (∇²ⁿ); so ∇⁶ → power = 3 (not 6). See
+# SpeedyWeather/src/dynamics/horizontal_diffusion.jl line 121:
+#     ∇²ⁿ[l+1,k] = -eigenvalue_norm^power / time_scale
+power = 3
+# Paper: "decay rate of 1 h^-1 for the shortest retained scale, n = 95."
+# This is stronger than the previous 2 h setting and is required both
+# to match the paper and to keep LC2 stable through day 15.
+time_scale_hours = 1.0
+
+[output]
+id = "lc1"
+dt_hours = 1
+# FullGaussianGrid output resolution. nlat_half = 64 → ~1.4°.
+nlat_half_out = 64

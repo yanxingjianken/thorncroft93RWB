@@ -1,0 +1,49 @@
+# LC2 (Z2 basic state) — Thorncroft, Hoskins & McIntyre (1993, QJRMS)
+# Z2 = Z1 + barotropic zonal-wind addition (+10 m/s at 20°N, -10 m/s at 50°N).
+
+[grid]
+trunc = 95
+nlayers = 15
+sigma_full = [0.967, 0.887, 0.784, 0.674, 0.569, 0.477, 0.400, 0.338,
+              0.287, 0.241, 0.197, 0.152, 0.106, 0.060, 0.018]
+
+[simulation]
+n_days = 16
+smoke_trunc = 31
+smoke_days  = 1
+# Smaller leapfrog Δt stabilises the late-time cyclonic filamentation in
+# LC2 that otherwise blows up around day 12–14. Default SpeedyWeather
+# value is 40 min at T31 (~13 min at T95); 15 min at T31 gives ~5 min at
+# T95 — comfortably under CFL for the sharpest PV features.
+dt_at_T31_minutes = 15
+
+[basic_state]
+u0 = 47.0
+eta0 = 0.252
+barotropic_add = true
+bt_amp = 10.0
+bt_lat_west = 20.0
+bt_lat_east = 50.0
+bt_width    = 10.0
+
+[perturbation]
+zonal_wavenumber = 6
+# 1 mb matches Thorncroft et al. 1993 (§3).
+amplitude_mb = 1.0
+envelope_lat = 45.0
+envelope_width = 15.0
+
+[diffusion]
+# SpeedyWeather.HyperDiffusion.power is the exponent n in ∇²ⁿ;
+# so ∇⁶ → power = 3.
+# time_scale_hours=2.0 (paper value) blows up in LC2 at day ~12 because
+# the barotropic addition pushes the cyclonic breaking across a stronger
+# deformation. Tightening to 1.0 h keeps the smallest scales controlled
+# through day 15 while leaving the growing wave essentially unaffected.
+power = 3
+time_scale_hours = 1.0
+
+[output]
+id = "lc2"
+dt_hours = 1
+nlat_half_out = 64

@@ -1,0 +1,27 @@
+# --- Linked SpeedyWeather.jl package (used via Julia package path) ---
+SpeedyWeather.jl
+Manifest.toml
+
+# --- Large raw + intermediate datasets (regeneratable) ---
+outputs/**/raw/
+outputs/**/processed.nc
+outputs/**/pv330_anom.nc
+outputs/**/vor250.nc
+outputs/**/theta_pv2_anom.nc
+outputs/**/composites/*.nc
+outputs/**/tracks/*.nc
+outputs/**/tracks/*.log
+outputs/**/tracks/cand_*.txt
+outputs/**/mp4/
+outputs/**/logs/
+
+# --- Python cruft ---
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# --- Editor / OS ---
+.DS_Store
+.vscode/
+*.swp
