@@ -38,7 +38,7 @@ NEG_THRESH = 0.1       # PVU; AC detection threshold q' < -NEG_THRESH
 AREA_MIN_KM2 = 5.0e5   # DetectBlobs area floor, km^2
 MERGE_DIST_DEG = 8.0   # DetectNodes --mergedist
 STITCH_RANGE_DEG = 7.0 # StitchNodes --range (deg between hourly steps)
-STITCH_MAXGAP = "6h"   # StitchNodes --maxgap
+STITCH_MAXGAP   = "12h"  # StitchNodes --maxgap
 SPAN_REQ_H = 90        # minimum track lifespan in hours
 
 # --- Selection ---
@@ -52,7 +52,7 @@ N_COMPOSITE_HOURS = 145        # 145 hourly frames: 0..144 over 6 days
 
 # --- Basis / projection ---
 THETA_LEVEL = 330.0    # isentropic surface for q
-SYMMETRIZE = False     # if True, average 36 rotations (10° step) at peak hour
+SYMMETRIZE = True      # if True, average 36 rotations (10° step) at peak hour
 N_ROT = 36             # used when SYMMETRIZE=True (360° / N_ROT step)
 SMOOTHING_DEG = 3.0    # Gaussian smoothing width passed to pvtend
 INCLUDE_LAP = False    # whether pvtend basis includes the Laplacian basis

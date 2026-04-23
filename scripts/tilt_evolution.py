@@ -278,16 +278,19 @@ def process(lc: str, polarity: str = "C"):
     if not valid:
         print(f"[{lc}:{polarity}] no valid frames; skipping animation")
         return
-    # Lower-row colorbars: 95th percentile of |·|
+    # Colorbars clipped at 95th percentile of |·| (both rows)
     pv_dt_flat = np.abs(pv_dt[valid])
     pv_dt_flat = pv_dt_flat[np.isfinite(pv_dt_flat)]
     fdef_flat = np.abs(F_DEF[valid])
     fdef_flat = fdef_flat[np.isfinite(fdef_flat)]
+    qa_flat = np.abs(qa[valid])
+    qa_flat = qa_flat[np.isfinite(qa_flat)]
     rmax_pvdt = float(np.percentile(pv_dt_flat, CFG.PCTL_CBAR)) \
         if pv_dt_flat.size else 1e-10
     rmax_def = float(np.percentile(fdef_flat, CFG.PCTL_CBAR)) \
         if fdef_flat.size else 1e-10
-    qa_abs_max = np.nanmax(np.abs(qa[valid]))
+    qa_abs_max = float(np.percentile(qa_flat, CFG.PCTL_CBAR)) \
+        if qa_flat.size else 1e-10
     th_flat = theta_pv2[valid][np.isfinite(theta_pv2[valid])]
     if th_flat.size:
         th_lo, th_hi = np.nanpercentile(th_flat, [5, 95])
@@ -315,7 +318,8 @@ def process(lc: str, polarity: str = "C"):
 
     fig.colorbar(imUL, ax=axUL, label=r"$\theta$ on 2 PVU [K]")
     fig.colorbar(imUR, ax=axUR,
-                 label=fr"$q'$ on {CFG.THETA_LEVEL:.0f} K [PVU]")
+                 label=(fr"$q'$ on {CFG.THETA_LEVEL:.0f} K [PVU]  "
+                        fr"(clipped at {CFG.PCTL_CBAR:.0f}%ile)"))
     fig.colorbar(imL, ax=axL,
                  label=(r"$\partial q/\partial t$ "
                         fr"(clipped at {CFG.PCTL_CBAR:.0f}%ile)"))

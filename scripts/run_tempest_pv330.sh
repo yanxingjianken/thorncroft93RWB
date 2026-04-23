@@ -23,7 +23,7 @@ MIN_LAT=${MIN_LAT:-35.0}
 MAX_LAT=${MAX_LAT:-75.0}
 MERGE_DIST=${MERGE_DIST:-8.0}
 STITCH_RANGE=${STITCH_RANGE:-7.0}
-STITCH_MAXGAP=${STITCH_MAXGAP:-6h}
+STITCH_MAXGAP=${STITCH_MAXGAP:-12h}
 SPAN_REQ_H=${SPAN_REQ_H:-90}
 AREA_MIN=${AREA_MIN:-5e5km2}
 
@@ -45,18 +45,25 @@ $TE_BIN/DetectNodes \
   --minlat "${MIN_LAT}" --maxlat "${MAX_LAT}" \
   --outputcmd "pv_anom_330,max,0" > "$TRK/detect_pv330_pos.log" 2>&1
 
-$TE_BIN/StitchNodes \
-  --in "$CAND_POS" --out "$TRK_POS" \
-  --in_fmt "lon,lat,pv_anom" \
-  --range "${STITCH_RANGE}" --mintime "${SPAN_REQ_H}h" --maxgap "${STITCH_MAXGAP}" \
-  > "$TRK/stitch_pv330_pos.log" 2>&1
-
+# DetectBlobs first, then filter candidates to keep only those inside a
+# qualifying (area>=AREA_MIN) blob.  This ensures every tracked center
+# sits inside an outlined blob in the final animation.
 $TE_BIN/DetectBlobs \
   --in_data "$IN" \
   --out "$BLOB_POS" \
   --thresholdcmd "pv_anom_330,>,${POS_THRESH},0" \
   --minlat "${MIN_LAT}" --maxlat "${MAX_LAT}" \
   --geofiltercmd "area,>=,${AREA_MIN}" > "$TRK/blobs_pv330_pos.log" 2>&1
+
+CAND_POS_F=$TRK/cand_max_pv330_filt.txt
+micromamba run -n blocking python "$ROOT/scripts/filter_cand_by_blob.py" \
+  "$CAND_POS" "$BLOB_POS" "$CAND_POS_F" >> "$TRK/detect_pv330_pos.log" 2>&1
+
+$TE_BIN/StitchNodes \
+  --in "$CAND_POS_F" --out "$TRK_POS" \
+  --in_fmt "lon,lat,pv_anom" \
+  --range "${STITCH_RANGE}" --mintime "${SPAN_REQ_H}h" --maxgap "${STITCH_MAXGAP}" \
+  > "$TRK/stitch_pv330_pos.log" 2>&1
 
 N_POS=$( (grep -c '^start' "$TRK_POS" 2>/dev/null) || echo 0)
 echo "[tempest-pv330] $LC C  => ${N_POS} tracks"
@@ -79,18 +86,22 @@ $TE_BIN/DetectNodes \
   --minlat "${MIN_LAT}" --maxlat "${MAX_LAT}" \
   --outputcmd "pv_anom_330,min,0" > "$TRK/detect_pv330_neg.log" 2>&1
 
-$TE_BIN/StitchNodes \
-  --in "$CAND_NEG" --out "$TRK_NEG" \
-  --in_fmt "lon,lat,pv_anom" \
-  --range "${STITCH_RANGE}" --mintime "${SPAN_REQ_H}h" --maxgap "${STITCH_MAXGAP}" \
-  > "$TRK/stitch_pv330_neg.log" 2>&1
-
 $TE_BIN/DetectBlobs \
   --in_data "$IN" \
   --out "$BLOB_NEG" \
   --thresholdcmd "pv_anom_330,<,-${NEG_THRESH},0" \
   --minlat "${MIN_LAT}" --maxlat "${MAX_LAT}" \
   --geofiltercmd "area,>=,${AREA_MIN}" > "$TRK/blobs_pv330_neg.log" 2>&1
+
+CAND_NEG_F=$TRK/cand_min_pv330_filt.txt
+micromamba run -n blocking python "$ROOT/scripts/filter_cand_by_blob.py" \
+  "$CAND_NEG" "$BLOB_NEG" "$CAND_NEG_F" >> "$TRK/detect_pv330_neg.log" 2>&1
+
+$TE_BIN/StitchNodes \
+  --in "$CAND_NEG_F" --out "$TRK_NEG" \
+  --in_fmt "lon,lat,pv_anom" \
+  --range "${STITCH_RANGE}" --mintime "${SPAN_REQ_H}h" --maxgap "${STITCH_MAXGAP}" \
+  > "$TRK/stitch_pv330_neg.log" 2>&1
 
 N_NEG=$( (grep -c '^start' "$TRK_NEG" 2>/dev/null) || echo 0)
 echo "[tempest-pv330] $LC AC => ${N_NEG} tracks"
