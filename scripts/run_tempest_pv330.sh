@@ -3,9 +3,7 @@
 # (positive q' blobs that correspond to Thorncroft RWB cyclonic
 # streamer tips).
 #
-# Threshold fallback: start at PV_THRESH_START=0.2 PVU; if fewer than
-# MIN_TRACKS tracks survive the (--mintime 90h) StitchNodes filter,
-# halve the threshold and retry, down to PV_THRESH_MIN=0.025 PVU.
+# Fixed threshold tracking: pv_anom_330 > 0.1 PVU.
 #
 # Usage: bash scripts/run_tempest_pv330.sh lc1
 set -euo pipefail
@@ -17,16 +15,15 @@ IN=$ROOT/outputs/$LC/pv330_anom.nc
 TRK=$ROOT/outputs/$LC/tracks
 mkdir -p "$TRK"
 
-PV_THRESH_START=${PV_THRESH_START:-0.2}
-PV_THRESH_MIN=${PV_THRESH_MIN:-0.025}
+PV_THRESH_START=${PV_THRESH_START:-0.1}
+PV_THRESH_MIN=${PV_THRESH_MIN:-0.1}
 MIN_TRACKS=${MIN_TRACKS:-6}
 SPAN_REQ_H=${SPAN_REQ_H:-90}
 
-# Using a bash loop: halve the threshold if the number of tracks with
-# span >= SPAN_REQ_H is < MIN_TRACKS.
+# Single-pass run at fixed threshold.
 THRESH=$PV_THRESH_START
 ATTEMPT=0
-MAX_ATTEMPT=5
+MAX_ATTEMPT=1
 
 CAND=$TRK/cand_max_pv330.txt
 TRK_OUT=$TRK/tracks_max_pv330.txt
@@ -64,11 +61,7 @@ while (( ATTEMPT < MAX_ATTEMPT )); do
     break
   fi
 
-  # halve threshold and loop
-  THRESH=$(python3 -c "print(max(${THRESH}/2.0, ${PV_THRESH_MIN}))")
-  if [[ "$THRESH" == "$PV_THRESH_MIN" ]] && (( ATTEMPT >= MAX_ATTEMPT )); then
-    break
-  fi
+  break
 done
 
 # Also run a single DetectBlobs pass at the final threshold for

@@ -2,7 +2,7 @@
 
 Columns: lc, track_id, time_iso, day_hour, lon, lat, pv_anom_330,
          area_deg2
-    area_deg2 = local-radius (10°) area where pv_anom_330 >= 0.2 PVU,
+    area_deg2 = local-radius (10°) area where pv_anom_330 >= 0.1 PVU,
     diagnostic only.
 
 Output: outputs/<lc>/tracks/track_centers.csv
@@ -51,7 +51,7 @@ def run(lc):
     src = out_dir / "tracks" / "tracks_max_top6_pv330.txt"
     tracks = parse_stitchnodes(src)
 
-    THR = 0.2
+    THR = 0.1
     csv_path = out_dir / "tracks" / "track_centers.csv"
     with open(csv_path, "w", newline="") as fh:
         w = csv.writer(fh)

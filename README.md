@@ -158,7 +158,7 @@ graph TD
 
     E --> H[scripts/prep_pv330_anom.py<br/>θ=330 K PV, anomaly wrt zonal mean]
     H --> I[outputs/&lt;lc&gt;/pv330_anom.nc]
-    I --> J[scripts/run_tempest_pv330.sh<br/>TempestExtremes DetectNodes + StitchNodes<br/>threshold 0.2→0.025 PVU fallback, 20–80°N, day 6–13, span≥90 h]
+    I --> J[scripts/run_tempest_pv330.sh<br/>TempestExtremes DetectNodes + StitchNodes<br/>fixed threshold >0.1 PVU, 20–80°N, day 6–13, span≥90 h]
     J --> K[outputs/&lt;lc&gt;/tracks/tracks_max_pv330.txt<br/>+ blobs_pv330_pos.nc]
     K --> L[scripts/select_top6.py]
     L --> M[tracks_max_top6_pv330.txt]
@@ -166,7 +166,7 @@ graph TD
     N --> O[outputs/&lt;lc&gt;/composites/C_composite.nc]
     O --> P[scripts/project_composite.py<br/>pvtend 5-basis &#40;F_INT, F_DEF, F_PROP, LAP, I&#41;]
     P --> Q[decomp_C.png, decomp_bases_C.png]
-    O --> R[scripts/tilt_evolution.py<br/>rotation-symmetrized peak basis,<br/>observed/predicted ellipse over 6 h horizon]
+    O --> R[scripts/tilt_evolution.py<br/>rotation-symmetrized peak basis,<br/>observed/predicted ellipse over 1 h horizon]
     R --> S[theta_tilt_C.png, tilt_animation_C.gif]
     K --> T[plotting/make_pv330_tracked_gif.py]
     T --> U[outputs/&lt;lc&gt;/plots/pv330_tracked.gif]
@@ -189,12 +189,14 @@ open-source packages:
   (`DetectNodes`, `StitchNodes`, `DetectBlobs`) tracks the
   PV-anomaly on the 330 K isentrope (the physically relevant
   streamer/bomb signature). `run_tempest_pv330.sh` applies a
-  threshold-halving fallback (0.2 → 0.025 PVU) over 20–80°N and
+  fixed threshold (>0.1 PVU) over 20–80°N and
   days 6–13, requiring track spans ≥ 90 h. Top-6 tracks are
+  additionally trimmed to a common start/end window so all six
+  lifecycles are synchronized for compositing. Top-6 tracks are
   composited on a 41×41, 1°-spaced, storm-relative patch and
   diagnosed with the **pvtend** 5-basis decomposition
   (`F_INT + F_DEF + F_PROP + LAP + I`). The deformation component
-  `F_DEF` is used to predict the 6-hour evolution of the
+  `F_DEF` is used to predict the hourly evolution of the
   PV-anomaly ellipse (cyan) vs the observed ellipse (green), so
   compression / extension of the major/minor axes plus rotation
   can be read directly off `tilt_animation_C.gif`.

@@ -62,7 +62,18 @@ def process(lc: str):
     pos_sum = np.nansum(np.where(qa > 0, qa, 0.0), axis=(1, 2))
     pos_sum[~np.isfinite(pos_sum)] = -np.inf
     pos_sum[0] = pos_sum[-1] = -np.inf
-    i0 = int(np.argmax(pos_sum))
+    # Restrict candidate peak hours to frames where pv_dt is finite.
+    valid_dt = np.isfinite(pv_dt).all(axis=(1, 2))
+    valid_idx = np.where(valid_dt)[0]
+    if valid_idx.size == 0:
+        print(f"[{lc}] no fully finite pv_dt frame; skipping projection")
+        return
+    pos_sel = pos_sum.copy()
+    pos_sel[~valid_dt] = -np.inf
+    if np.all(~np.isfinite(pos_sel)):
+        i0 = int(valid_idx[len(valid_idx) // 2])
+    else:
+        i0 = int(np.argmax(pos_sel))
 
     # Symmetrize BOTH q and q' at the peak hour
     q_sym = rot_avg(q[i0])

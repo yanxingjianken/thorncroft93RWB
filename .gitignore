@@ -14,6 +14,7 @@ outputs/**/tracks/*.log
 outputs/**/tracks/cand_*.txt
 outputs/**/mp4/
 outputs/**/logs/
+outputs/**/projections/scripts/
 
 # --- Python cruft ---
 __pycache__/

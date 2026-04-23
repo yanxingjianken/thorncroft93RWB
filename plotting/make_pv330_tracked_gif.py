@@ -2,7 +2,7 @@
 
 Outputs: outputs/<lc>/plots/pv330_tracked.gif
   - Up to 6 top-ranked PV-anom tracks (blue lines) on NH polar stereo
-  - Blob outlines (cyan) where pv_anom_330 > adaptive threshold
+    - Blob outlines (cyan) where pv_anom_330 > 0.1 PVU
 """
 from __future__ import annotations
 import sys

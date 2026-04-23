@@ -8,7 +8,7 @@
       gamma1, gamma2  -> A = sqrt(g1^2+g2^2)
       alpha = wrap90( 0.5*deg(atan2(gamma1, gamma2)) + 90 )
       theta_obs = cov-ellipse axis of q'(t)>0
-      q_next   = q[t] + proj['def'] * 3600          # F_DEF forward-Euler
+    q_next   = q[t] + proj['def'] * 3600          # hourly F_DEF forward-Euler
       q'_next  = q_next - mean_x(q_next)
       theta_pred = cov-ellipse axis of q'_next>0
 * Outputs:
@@ -146,10 +146,9 @@ def process(lc: str):
     a_pred_arr = np.full(nt, np.nan); b_pred_arr = np.full(nt, np.nan)
     q_next_anom = np.full_like(qa, np.nan)
 
-    # Prediction horizon: forward-Euler over DT_PRED so that the
-    # integrated compression / extension of the ellipse axes by F_DEF
-    # is visually distinguishable from the observed ellipse.
-    DT_PRED = 6.0 * DT
+    # Prediction horizon is one hourly step, consistent with the
+    # hourly composite/tracking timeline.
+    DT_PRED = 1.0 * DT
 
     for i in range(1, nt - 1):
         if np.any(np.isnan(pv_dt[i])):
@@ -164,7 +163,7 @@ def process(lc: str):
         theta_obs[i] = th_o
         a_obs_arr[i] = a_o; b_obs_arr[i] = b_o
         xc_obs_arr[i] = xc_o; yc_obs_arr[i] = yc_o
-        # Forward-Euler prediction of q' over DT_PRED (6 h).  The full
+        # Forward-Euler prediction of q' over DT_PRED (1 h).  The full
         # tendency on the 5-basis is ~ F_INT + F_DEF + F_PROP but
         # F_DEF alone drives the ellipse axis stretch/compress, so we
         # integrate q + F_DEF * DT_PRED for the ellipse fit.
@@ -228,11 +227,11 @@ def process(lc: str):
     else:
         th_lo, th_hi = 300.0, 340.0
     # pv_anom contours (replacing the former zeta250 overlay).  Use
-    # the fixed tracking threshold on q' (0.2 PVU) plus stronger
+    # the fixed tracking threshold on q' (0.1 PVU) plus stronger
     # levels to visualise the streamer envelope.
-    pv_levels = [-0.5, -0.2, 0.2, 0.5]
+    pv_levels = [-0.5, -0.1, 0.1, 0.5]
     pv_lsty = ["--", "--", "-", "-"]
-    pv_contour_txt = (r"contours: $q'_{330K}$ at $\pm 0.2, \pm 0.5$ PVU "
+    pv_contour_txt = (r"contours: $q'_{330K}$ at $\pm 0.1, \pm 0.5$ PVU "
                       r"(solid +, dashed −)")
 
     fig, axes = plt.subplots(2, 2, figsize=(12.5, 11),
@@ -350,7 +349,7 @@ def process(lc: str):
                        "\n" + pv_contour_txt)
         titUR.set_text(fr"$q'$ on {THETA_LEVEL:.0f} K  "
                        fr"(green dashed = $\theta_{{obs}}$, a,b observed;  "
-                       fr"cyan = $\theta_{{pred}}$, a,b stretched $\pm 6h$)"
+                       fr"cyan = $\theta_{{pred}}$, a,b stretched $\pm 1h$)"
                        "\n" + pv_contour_txt)
         titL.set_text(r"$\partial q/\partial t$ (centered diff)")
         titR.set_text(
