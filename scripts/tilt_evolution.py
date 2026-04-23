@@ -1,42 +1,29 @@
-"""Tilt evolution diagnostics for the PV Lagrangian composite.
+"""Track-following tilt evolution + 4-panel animation per LC/method/polarity.
 
-Runs for both polarities:
-  C  (cyclonic, positive q')   – mask "> 0", cov-ellipse weights max(+q', 0)
-  AC (anticyclonic, negative q')– mask "< 0", cov-ellipse weights max(-q', 0)
+For each composite hour i:
+  • Build a strict ellipse mask:
+        - signed anomaly polarity (C: anom>+thr, AC: anom<-thr)
+        - inside guard circle of radius (PATCH_HALF - GUARD_PAD_DEG)
+  • Fit a weighted-covariance ellipse over the masked points
+        (a,b = √(λ),  θ_obs ∈ [-90,90)).
+  • Build basis at frame i (no symmetrization in v2.3) and project pv_dt[i].
+  • Predict (a_pred, b_pred, θ_pred) one hour later via β/ax/ay/γ1/γ2.
 
-Pipeline:
-  1. Peak hour t* = argmax_t  sum(max(sgn·q'(t), 0)), sgn=+1 for C, −1 for AC.
-  2. Basis computed from (q, q') at t*, with optional 36-rotation
-     symmetrization (``CFG.SYMMETRIZE``), ``center_lat = 55 N``.
-  3. For every valid hour, project pv_dt onto the basis:
-        γ1, γ2, F_DEF, α = ½·atan(γ1/γ2)+90°, A=√(γ1²+γ2²)
-     Also compute
-        θ_obs  = cov-ellipse angle of (sgn·q')>0 weights,
-        q_next = q + F_DEF·Δt_pred   (Δt_pred = 1 h)
-        θ_pred = cov-ellipse angle of the same weights of q_next's q'.
-
-Outputs (per LC × polarity):
-  projections/plots/theta_tilt_{C,AC}.png
-      2-panel: top θ_obs/θ_pred, bottom α + A.
-  projections/plots/theta_tilt_accum_{C,AC}.png
-      cumulative unwrapped Δθ_obs (green) and cumulative Δθ_pred
-      (cyan) from hour 0 to hour N−1.
-  projections/plots/tilt_animation_{C,AC}.(mp4|gif)
-      2×2 panel animation.  Lower-row colorbars are clipped at the
-      ``PCTL_CBAR`` percentile of |pv_dt| and |F_DEF|.  Falls back
-      to GIF if ffmpeg is not available.
+Writes per (lc, method, polarity):
+  outputs/<lc>/projections/<method>/plots/theta_tilt_{C,AC}.png
+  outputs/<lc>/projections/<method>/plots/theta_tilt_accum_{C,AC}.png
+  outputs/<lc>/projections/<method>/plots/tilt_animation_{C,AC}.mp4
+  outputs/<lc>/projections/<method>/data/tilt_{C,AC}.npz
 """
 from __future__ import annotations
 import sys
 import argparse
 from pathlib import Path
-
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
-from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
-from scipy.ndimage import rotate as nd_rotate
+from matplotlib.animation import FuncAnimation, FFMpegWriter
 import pvtend
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -47,395 +34,364 @@ ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
 M_PER_DEG = 111_000.0
 
 
-def _rot_avg(field, n_rot=CFG.N_ROT):
-    out = np.zeros_like(field, dtype="float64")
-    for k in range(n_rot):
-        ang = k * (360.0 / n_rot)
-        out += nd_rotate(field, ang, reshape=False, order=1,
-                         mode="nearest")
-    return out / n_rot
-
-
-def wrap90(a):
-    """Wrap angle(s) in degrees to (-90, 90]."""
-    return ((a + 90.0) % 180.0) - 90.0
-
-
-def cov_ellipse_angle(weights, X, Y):
-    """Return (theta_deg in [-90,90], a, b, xc, yc) of ``weights`` mass ellipse.
-
-    ``weights`` should already be clipped non-negative (e.g.
-    max(q',0) for C or max(-q',0) for AC).
-    """
-    w = np.where(weights > 0, weights, 0.0)
-    s = w.sum()
-    if s <= 0:
-        return np.nan, np.nan, np.nan, np.nan, np.nan
-    xc = (w * X).sum() / s
-    yc = (w * Y).sum() / s
-    dx = X - xc; dy = Y - yc
-    Cxx = (w * dx * dx).sum() / s
-    Cyy = (w * dy * dy).sum() / s
-    Cxy = (w * dx * dy).sum() / s
-    theta = 0.5 * np.degrees(np.arctan2(2.0 * Cxy, Cxx - Cyy))
-    tr = Cxx + Cyy
-    det = Cxx * Cyy - Cxy * Cxy
-    disc = max(tr * tr / 4.0 - det, 0.0)
-    l1 = tr / 2.0 + np.sqrt(disc)
-    l2 = tr / 2.0 - np.sqrt(disc)
-    a = 2.0 * np.sqrt(max(l1, 0.0))
-    b = 2.0 * np.sqrt(max(l2, 0.0))
-    return wrap90(theta), a, b, xc, yc
-
-
-def _unwrap_deg(series):
-    """Unwrap a (-90, 90] series to remove ±180° discontinuities."""
-    x = np.array(series, dtype="float64")
-    mask = np.isfinite(x)
-    if mask.sum() < 2:
-        return x
-    out = x.copy()
-    # Treat wrap90 as period 180° by scaling into the standard unwrap.
-    idx = np.where(mask)[0]
-    vals = np.deg2rad(2.0 * x[idx])
-    un = np.unwrap(vals)
-    out[idx] = 0.5 * np.rad2deg(un)
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+def _fill(F: np.ndarray) -> np.ndarray:
+    out = F.copy()
+    out[~np.isfinite(out)] = 0.0
     return out
 
 
-def _save_anim(anim, out_mp4: Path, fps: int):
-    """Save with ffmpeg if possible, else fall back to GIF."""
-    try:
-        if FFMpegWriter.isAvailable():
-            writer = FFMpegWriter(fps=fps, bitrate=3200,
-                                  codec="libx264",
-                                  extra_args=["-pix_fmt", "yuv420p"])
-            anim.save(out_mp4, writer=writer)
-            return out_mp4
-    except Exception as e:
-        print(f"  FFMpegWriter failed ({e!r}); falling back to GIF")
-    out_gif = out_mp4.with_suffix(".gif")
-    anim.save(out_gif, writer=PillowWriter(fps=fps))
-    return out_gif
+def _strict_mask(anom: np.ndarray, polarity: str, thr: float,
+                 X: np.ndarray, Y: np.ndarray,
+                 guard_radius: float) -> np.ndarray:
+    """Signed-anomaly mask AND inside guard circle."""
+    if polarity == "C":
+        m = anom > thr
+    else:
+        m = anom < -thr
+    rr = np.sqrt(X * X + Y * Y)
+    return m & (rr <= guard_radius)
 
 
-def process(lc: str, polarity: str = "C"):
-    ds = xr.open_dataset(ROOT / lc / "composites" /
-                         f"{polarity}_composite.nc")
-    q = ds["pv_composite"].values.astype("float64")
-    theta_pv2 = ds["theta_pv2_composite"].values.astype("float64")
-    pv_anom_p = ds["pv_anom_composite"].values.astype("float64")
-    t_hour = ds["t"].values.astype(int)
+def _fit_ellipse(mask: np.ndarray, weights: np.ndarray,
+                 X: np.ndarray, Y: np.ndarray):
+    """Weighted-covariance ellipse over masked points.
+
+    Returns (theta_deg ∈ [-90,90), a, b, xc, yc) or all NaN if too sparse.
+    """
+    w = np.where(mask, np.abs(weights), 0.0)
+    s = float(w.sum())
+    if s <= 0 or mask.sum() < 8:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+    xc = float((w * X).sum() / s)
+    yc = float((w * Y).sum() / s)
+    dx = X - xc
+    dy = Y - yc
+    sxx = float((w * dx * dx).sum() / s)
+    syy = float((w * dy * dy).sum() / s)
+    sxy = float((w * dx * dy).sum() / s)
+    cov = np.array([[sxx, sxy], [sxy, syy]])
+    vals, vecs = np.linalg.eigh(cov)
+    order = np.argsort(vals)[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+    a = 2.0 * np.sqrt(max(vals[0], 0.0))   # semi-major (in deg)
+    b = 2.0 * np.sqrt(max(vals[1], 0.0))   # semi-minor
+    vx, vy = vecs[0, 0], vecs[1, 0]
+    theta = np.degrees(np.arctan2(vy, vx))
+    # wrap to [-90, 90)
+    while theta >= 90.0:
+        theta -= 180.0
+    while theta < -90.0:
+        theta += 180.0
+    return theta, a, b, xc, yc
+
+
+def _wrap_diff(a: float, b: float) -> float:
+    """Signed mod-180 difference a-b in (-90,90]."""
+    d = (a - b + 90.0) % 180.0 - 90.0
+    return d
+
+
+def _unwrap_mod180(theta: np.ndarray) -> np.ndarray:
+    """Continuity-unwrap a mod-180 angle series so adjacent samples differ
+    by at most 90°. NaN values are propagated; the running offset is
+    held across NaN gaps so the next finite sample is connected to the
+    last finite sample.
+    """
+    out = np.full_like(theta, np.nan, dtype="float64")
+    last = None
+    offset = 0.0
+    for i, v in enumerate(theta):
+        if not np.isfinite(v):
+            continue
+        if last is None:
+            out[i] = v
+            last = v
+            continue
+        cand = v + offset
+        # bring within ±90 of the previous unwrapped value
+        while cand - last > 90.0:
+            cand -= 180.0
+            offset -= 180.0
+        while cand - last < -90.0:
+            cand += 180.0
+            offset += 180.0
+        out[i] = cand
+        last = cand
+    return out
+
+
+def _predict_one_step(qa_now, q_now, X_m, Y_m, x_rel, y_rel,
+                      polarity: str, fit_thr: float,
+                      guard_radius: float, dt_h: float):
+    """Project pv_dt and integrate one hour to get predicted ellipse."""
+    pv_dt_local = (q_now * 0)  # placeholder — not used here
+    return None  # (computed in main loop where pv_dt is known)
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+def process(lc: str, method: str, polarity: str = "C"):
+    spec = CFG.METHOD[method]
+    src = ROOT / lc / "composites" / method / f"{polarity}_composite.nc"
+    if not src.exists():
+        print(f"[{lc}:{method}:{polarity}] missing {src}; skipping")
+        return
+    ds = xr.open_dataset(src)
+    q = ds["total_composite"].values.astype("float64")
+    qa = ds["anom_composite"].values.astype("float64")
+    t_hour = ds["t"].values
     x_rel = ds["x"].values.astype("float64")
     y_rel = ds["y"].values.astype("float64")
-    track_lon = ds["track_lon"].values
-    track_lat = ds["track_lat"].values
-
-    nt, ny, nx = q.shape
     X, Y = np.meshgrid(x_rel, y_rel)
 
-    qa = q - np.nanmean(q, axis=-1, keepdims=True)
-    sgn = +1.0 if polarity == "C" else -1.0
+    nt = q.shape[0]
+    fit_thr = float(spec["mask_thresh"])
+    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
     mask_str = "> 0" if polarity == "C" else "< 0"
-
     dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
     dy_m = CFG.DX * M_PER_DEG
 
-    # Centered-difference pv_dt over 1 h (DT_PRED_HOURS·3600)
-    DT = 3600.0
-    DT_PRED = CFG.DT_PRED_HOURS * 3600.0
-    pv_dt = np.full_like(qa, np.nan)
-    pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * DT)
+    # pv_dt centred difference of TOTAL field
+    pv_dt = np.full_like(q, np.nan)
+    pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * 3600.0)
 
-    # --- peak-hour basis ---
-    mass = np.nansum(np.where(sgn * qa > 0, sgn * qa, 0.0), axis=(1, 2))
-    mass[~np.isfinite(mass)] = -np.inf
-    mass[0] = mass[-1] = -np.inf
-    i_peak = int(np.argmax(mass))
-    if CFG.SYMMETRIZE:
-        q_peak = _rot_avg(q[i_peak])
-        qa_peak = _rot_avg(qa[i_peak])
-        basis_note = f"rot-sym ({CFG.N_ROT}×10°)"
-    else:
-        q_peak = q[i_peak]
-        qa_peak = qa[i_peak]
-        basis_note = "raw peak-hour"
-    qdy_peak, qdx_peak = np.gradient(q_peak, dy_m, dx_m, edge_order=2)
-    basis = pvtend.compute_orthogonal_basis(
-        qa_peak, qdx_peak, qdy_peak, x_rel, y_rel,
-        mask=mask_str,
-        apply_smoothing=True, smoothing_deg=CFG.SMOOTHING_DEG,
-        grid_spacing=CFG.DX, center_lat=CFG.CENTER_LAT,
-        include_lap=CFG.INCLUDE_LAP,
-    )
+    theta_obs = np.full(nt, np.nan)
+    a_obs = np.full(nt, np.nan); b_obs = np.full(nt, np.nan)
+    xc_obs = np.full(nt, np.nan); yc_obs = np.full(nt, np.nan)
+    theta_pred = np.full(nt, np.nan)
+    a_pred = np.full(nt, np.nan); b_pred = np.full(nt, np.nan)
+    xc_pred = np.full(nt, np.nan); yc_pred = np.full(nt, np.nan)
+    deform_field = np.full_like(q, np.nan)   # -gamma1*phi4 - gamma2*phi5
 
-    # diagnostics
-    F_DEF = np.full_like(qa, np.nan)
-    g1 = np.full(nt, np.nan); g2 = np.full(nt, np.nan)
-    A = np.full(nt, np.nan); alpha = np.full(nt, np.nan)
-    theta_obs = np.full(nt, np.nan); theta_pred = np.full(nt, np.nan)
-    a_obs_arr = np.full(nt, np.nan); b_obs_arr = np.full(nt, np.nan)
-    xc_obs_arr = np.full(nt, np.nan); yc_obs_arr = np.full(nt, np.nan)
-    a_pred_arr = np.full(nt, np.nan); b_pred_arr = np.full(nt, np.nan)
-    q_next_anom = np.full_like(qa, np.nan)
-
-    for i in range(1, nt - 1):
-        if np.any(np.isnan(pv_dt[i])):
+    for i in range(nt):
+        qai = qa[i]
+        if not np.isfinite(qai).any():
             continue
-        proj = pvtend.project_field(pv_dt[i], basis, grid_spacing=CFG.DX)
-        F_DEF[i] = proj["def"]
-        g1[i] = proj["gamma1"]; g2[i] = proj["gamma2"]
-        A[i] = float(np.hypot(g1[i], g2[i]))
-        alpha[i] = wrap90(0.5 * np.degrees(np.arctan2(g1[i], g2[i])) + 90.0)
-        # Cov-ellipse weights use polarity-signed anomaly
-        w_obs = np.maximum(sgn * qa[i], 0.0)
-        th_o, a_o, b_o, xc_o, yc_o = cov_ellipse_angle(w_obs, X, Y)
-        theta_obs[i] = th_o
-        a_obs_arr[i] = a_o; b_obs_arr[i] = b_o
-        xc_obs_arr[i] = xc_o; yc_obs_arr[i] = yc_o
-        q_next = q[i] + F_DEF[i] * DT_PRED
-        q_next_a = q_next - np.nanmean(q_next, axis=-1, keepdims=True)
-        q_next_anom[i] = q_next_a
-        w_pred = np.maximum(sgn * q_next_a, 0.0)
-        th_p, a_p, b_p, xc_p, yc_p = cov_ellipse_angle(w_pred, X, Y)
-        theta_pred[i] = th_p
-        a_pred_arr[i] = a_p; b_pred_arr[i] = b_p
+        qai = _fill(qai)
+        qi = _fill(q[i])
+        m = _strict_mask(qai, polarity, fit_thr, X, Y, guard_r)
+        if m.sum() < 8:
+            continue
+        th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y)
+        theta_obs[i] = th; a_obs[i] = a_; b_obs[i] = b_
+        xc_obs[i] = xcc; yc_obs[i] = ycc
 
-    # ---- theta_tilt_{C,AC}.png : 2 panels ----
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
-                                   constrained_layout=True)
-    ax1.plot(t_hour, theta_obs, color="green", lw=1.6,
-             label=r"$\theta_{\rm obs}$")
-    ax1.plot(t_hour, theta_pred, color="cyan", lw=1.6,
-             label=r"$\theta_{\rm pred}$  ($q+F_{DEF}\Delta t$)")
-    ax1.axhline(0, color="k", lw=0.4, alpha=0.5)
-    ax1.set_ylabel("orientation [deg, (-90, 90]]")
-    ax1.set_ylim(-90, 90)
-    ax1.legend(loc="upper right", fontsize=9)
-    ax1.set_title(f"{lc.upper()}  {polarity}  Lagrangian composite "
-                  f"— PV-axis tilt evolution  [{basis_note}]")
+        if i == 0 or i == nt - 1 or not np.isfinite(pv_dt[i]).any():
+            continue
+        # Build basis at i and project
+        qdy, qdx = np.gradient(qi, dy_m, dx_m, edge_order=2)
+        try:
+            basis = pvtend.compute_orthogonal_basis(
+                qai, qdx, qdy, x_rel, y_rel,
+                mask=mask_str,
+                apply_smoothing=True, smoothing_deg=CFG.SMOOTHING_DEG,
+                grid_spacing=CFG.DX, center_lat=CFG.CENTER_LAT,
+                include_lap=CFG.INCLUDE_LAP,
+            )
+            proj = pvtend.project_field(_fill(pv_dt[i]), basis,
+                                        grid_spacing=CFG.DX)
+            deform_field[i] = proj["def"]
+        except Exception as exc:
+            print(f"  [t={int(t_hour[i])}h] basis/proj failed: {exc}")
+            continue
+        # One-hour prediction via Euler step on q'
+        dt_s = CFG.DT_PRED_HOURS * 3600.0
+        qa_next = qai + dt_s * proj["recon"]
+        m2 = _strict_mask(qa_next, polarity, fit_thr, X, Y, guard_r)
+        if m2.sum() < 8:
+            continue
+        th2, a2, b2, xc2, yc2 = _fit_ellipse(m2, qa_next, X, Y)
+        theta_pred[i] = th2; a_pred[i] = a2; b_pred[i] = b2
+        xc_pred[i] = xc2; yc_pred[i] = yc2
 
-    ax2.plot(t_hour, alpha, color="magenta", lw=1.6,
-             label=r"$\alpha = \frac{1}{2}\arctan(\gamma_1/\gamma_2)+90^\circ$")
-    ax2.set_ylim(-90, 90)
-    ax2.set_ylabel(r"$\alpha$ [deg]", color="magenta")
-    ax2.tick_params(axis="y", labelcolor="magenta")
-    ax2.axhline(0, color="k", lw=0.4, alpha=0.5)
-    ax2b = ax2.twinx()
-    ax2b.plot(t_hour, A, color="black", lw=1.4,
-              label=r"$A=\sqrt{\gamma_1^2+\gamma_2^2}$")
-    ax2b.set_ylabel(r"$A$ [PV s$^{-1}$ units]")
-    ax2.set_xlabel("hour since 2000-01-07 00 UTC (day 6)")
-    lns = ax2.get_legend_handles_labels()[0] + \
-          ax2b.get_legend_handles_labels()[0]
-    lbl = ax2.get_legend_handles_labels()[1] + \
-          ax2b.get_legend_handles_labels()[1]
-    ax2.legend(lns, lbl, loc="upper right", fontsize=9)
+    # ----- save NPZ sidecar
+    data_dir = ROOT / lc / "projections" / method / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    npz = data_dir / f"tilt_{polarity}.npz"
+    np.savez(npz,
+             t_hour=t_hour, theta_obs=theta_obs, theta_pred=theta_pred,
+             a_obs=a_obs, b_obs=b_obs, a_pred=a_pred, b_pred=b_pred,
+             xc_obs=xc_obs, yc_obs=yc_obs, xc_pred=xc_pred, yc_pred=yc_pred)
 
-    plots = ROOT / lc / "projections" / "plots"
+    # ----- tilt time series
+    plots = ROOT / lc / "projections" / method / "plots"
     plots.mkdir(parents=True, exist_ok=True)
-    out_png = plots / f"theta_tilt_{polarity}.png"
-    fig.savefig(out_png, dpi=140); plt.close(fig)
 
-    # ---- theta_tilt_accum_{C,AC}.png ----
-    # Cumulative observed tilt change:  Θ_obs_cum(t) = Σ Δθ_obs[k]
-    # Cumulative predicted tilt change: Θ_pred_cum(t) = Σ (θ_pred[k]-θ_obs[k])
-    # Wrap-aware increments via unwrapping with 180° period.
-    th_o_un = _unwrap_deg(theta_obs)
-    d_obs = np.full(nt, np.nan)
-    mask_o = np.isfinite(th_o_un)
-    idx_o = np.where(mask_o)[0]
-    if idx_o.size >= 2:
-        d_obs[idx_o[1:]] = np.diff(th_o_un[idx_o])
-    d_obs_cum = np.full(nt, np.nan)
-    d_obs_cum_vals = np.nancumsum(np.where(np.isfinite(d_obs), d_obs, 0.0))
-    d_obs_cum[mask_o] = d_obs_cum_vals[mask_o]
+    # Continuity-unwrap mod 180 so the time series has no ±180° sign flips.
+    theta_obs_cont = _unwrap_mod180(theta_obs)
+    theta_pred_cont = _unwrap_mod180(theta_pred)
 
-    # Hourly predicted tilt increment: wrap90 difference θ_pred-θ_obs
-    delta_pred = wrap90(theta_pred - theta_obs)
-    d_pred_cum_vals = np.nancumsum(np.where(np.isfinite(delta_pred),
-                                             delta_pred, 0.0))
-    mask_p = np.isfinite(delta_pred)
-    d_pred_cum = np.full(nt, np.nan)
-    d_pred_cum[mask_p] = d_pred_cum_vals[mask_p]
-
-    fig, ax = plt.subplots(figsize=(10, 5), constrained_layout=True)
-    ax.plot(t_hour, d_obs_cum, color="green", lw=1.8,
-            label=r"$\sum \Delta\theta_{\rm obs}$ (unwrapped)")
-    ax.plot(t_hour, d_pred_cum, color="cyan", lw=1.8,
-            label=r"$\sum (\theta_{\rm pred}-\theta_{\rm obs})$  (1h F$_{DEF}$)")
-    ax.axhline(0, color="k", lw=0.4, alpha=0.5)
-    ax.set_xlabel("hour since 2000-01-07 00 UTC (day 6)")
-    ax.set_ylabel("cumulative tilt change [deg]")
-    ax.set_title(f"{lc.upper()}  {polarity}  cumulative PV-axis tilt "
-                 f"change day 6 → day 13  [{basis_note}]")
-    ax.legend(loc="best", fontsize=10)
-    out_accum = plots / f"theta_tilt_accum_{polarity}.png"
-    fig.savefig(out_accum, dpi=140); plt.close(fig)
-
-    # ---- tilt_animation_{C,AC}.(mp4|gif) ----
-    valid = [i for i in range(1, nt - 1) if np.isfinite(theta_obs[i])]
-    if not valid:
-        print(f"[{lc}:{polarity}] no valid frames; skipping animation")
-        return
-    # Colorbars clipped at 95th percentile of |·| (both rows)
-    pv_dt_flat = np.abs(pv_dt[valid])
-    pv_dt_flat = pv_dt_flat[np.isfinite(pv_dt_flat)]
-    fdef_flat = np.abs(F_DEF[valid])
-    fdef_flat = fdef_flat[np.isfinite(fdef_flat)]
-    qa_flat = np.abs(qa[valid])
-    qa_flat = qa_flat[np.isfinite(qa_flat)]
-    rmax_pvdt = float(np.percentile(pv_dt_flat, CFG.PCTL_CBAR)) \
-        if pv_dt_flat.size else 1e-10
-    rmax_def = float(np.percentile(fdef_flat, CFG.PCTL_CBAR)) \
-        if fdef_flat.size else 1e-10
-    qa_abs_max = float(np.percentile(qa_flat, CFG.PCTL_CBAR)) \
-        if qa_flat.size else 1e-10
-    th_flat = theta_pv2[valid][np.isfinite(theta_pv2[valid])]
-    if th_flat.size:
-        th_lo, th_hi = np.nanpercentile(th_flat, [5, 95])
-    else:
-        th_lo, th_hi = 300.0, 340.0
-
-    pv_levels = [-0.5, -0.1, 0.1, 0.5]
-    pv_lsty = ["--", "--", "-", "-"]
-    pv_contour_txt = (r"contours: $q'_{330K}$ at $\pm 0.1, \pm 0.5$ PVU "
-                      r"(solid +, dashed −)")
-
-    fig, axes = plt.subplots(2, 2, figsize=(12.5, 11),
-                             constrained_layout=True)
-    axUL, axUR = axes[0]; axL, axR = axes[1]
-
-    imUL = axUL.pcolormesh(X, Y, theta_pv2[valid[0]], cmap="Spectral_r",
-                           vmin=th_lo, vmax=th_hi, shading="auto")
-    imUR = axUR.pcolormesh(X, Y, qa[valid[0]], cmap="RdBu_r",
-                           vmin=-qa_abs_max, vmax=qa_abs_max,
-                           shading="auto")
-    imL = axL.pcolormesh(X, Y, pv_dt[valid[0]], cmap="RdBu_r",
-                         vmin=-rmax_pvdt, vmax=rmax_pvdt, shading="auto")
-    imR = axR.pcolormesh(X, Y, F_DEF[valid[0]], cmap="RdBu_r",
-                         vmin=-rmax_def, vmax=rmax_def, shading="auto")
-
-    fig.colorbar(imUL, ax=axUL, label=r"$\theta$ on 2 PVU [K]")
-    fig.colorbar(imUR, ax=axUR,
-                 label=(fr"$q'$ on {CFG.THETA_LEVEL:.0f} K [PVU]  "
-                        fr"(clipped at {CFG.PCTL_CBAR:.0f}%ile)"))
-    fig.colorbar(imL, ax=axL,
-                 label=(r"$\partial q/\partial t$ "
-                        fr"(clipped at {CFG.PCTL_CBAR:.0f}%ile)"))
-    fig.colorbar(imR, ax=axR,
-                 label=(r"$F_{DEF}=-\gamma_1\phi_4-\gamma_2\phi_5$ "
-                        fr"(clipped at {CFG.PCTL_CBAR:.0f}%ile)"))
-
-    def _prep(ax):
-        ax.set_aspect("equal")
-        ax.set_xlabel("x [deg]"); ax.set_ylabel("y [deg]")
-        ax.axhline(0, color="k", lw=0.3, alpha=0.4)
-        ax.axvline(0, color="k", lw=0.3, alpha=0.4)
-        ax.plot(0, 0, marker="+", ms=12, mew=1.6, color="k")
-
-    for ax in (axUL, axUR, axL, axR):
-        _prep(ax)
-
-    ell_obs_UR = Ellipse((0, 0), 1, 1, angle=0, fill=False,
-                         edgecolor="green", lw=1.8, ls="--")
-    ell_pred_UR = Ellipse((0, 0), 1, 1, angle=0, fill=False,
-                          edgecolor="cyan", lw=1.8, ls="-")
-    ell_pred_R = Ellipse((0, 0), 1, 1, angle=0, fill=False,
-                         edgecolor="cyan", lw=1.8, ls="-")
-    line_alpha, = axR.plot([], [], color="magenta", lw=1.5)
-    axUR.add_patch(ell_pred_UR); axUR.add_patch(ell_obs_UR)
-    axR.add_patch(ell_pred_R)
-
-    titUL = axUL.set_title("")
-    titUR = axUR.set_title("")
-    titL = axL.set_title("")
-    titR = axR.set_title("")
-    sup = fig.suptitle("")
-    ctx_state = {"cUL": None, "cUR": None}
-
-    def update(idx):
-        i = valid[idx]
-        imUL.set_array(theta_pv2[i].ravel())
-        imUR.set_array(qa[i].ravel())
-        imL.set_array(pv_dt[i].ravel())
-        imR.set_array(F_DEF[i].ravel())
-        for key in ("cUL", "cUR"):
-            c = ctx_state[key]
-            if c is not None:
-                try:
-                    c.remove()
-                except Exception:
-                    for coll in getattr(c, "collections", []):
-                        try:
-                            coll.remove()
-                        except Exception:
-                            pass
-                ctx_state[key] = None
-        pa = pv_anom_p[i]
-        if np.any(np.isfinite(pa)):
-            ctx_state["cUL"] = axUL.contour(
-                X, Y, pa, levels=pv_levels, colors="k",
-                linewidths=0.8, linestyles=pv_lsty)
-            ctx_state["cUR"] = axUR.contour(
-                X, Y, pa, levels=pv_levels, colors="k",
-                linewidths=0.8, linestyles=pv_lsty)
-        a_o = a_obs_arr[i]; b_o = b_obs_arr[i]
-        xc_o = xc_obs_arr[i]; yc_o = yc_obs_arr[i]
-        ell_obs_UR.set_center((xc_o, yc_o))
-        ell_obs_UR.set_width(max(a_o, 1e-3))
-        ell_obs_UR.set_height(max(b_o, 1e-3))
-        ell_obs_UR.set_angle(theta_obs[i])
-        a_p = a_pred_arr[i]; b_p = b_pred_arr[i]
-        for e in (ell_pred_UR, ell_pred_R):
-            e.set_center((xc_o, yc_o))
-            e.set_width(max(a_p, 1e-3)); e.set_height(max(b_p, 1e-3))
-            e.set_angle(theta_pred[i])
-        Lx = 25.0
-        ang = np.deg2rad(alpha[i])
-        line_alpha.set_data([-Lx * np.cos(ang), Lx * np.cos(ang)],
-                            [-Lx * np.sin(ang), Lx * np.sin(ang)])
-        lon_c = float(track_lon[:, i][np.isfinite(track_lon[:, i])].mean()) \
-            if np.any(np.isfinite(track_lon[:, i])) else np.nan
-        lat_c = float(track_lat[:, i][np.isfinite(track_lat[:, i])].mean()) \
-            if np.any(np.isfinite(track_lat[:, i])) else np.nan
-        stretch = a_p / max(a_o, 1e-6)
-        titUL.set_text(fr"$\theta$ on 2 PVU  t={t_hour[i]}h  "
-                       fr"center=({lon_c:.1f}E, {lat_c:.1f}N)"
-                       "\n" + pv_contour_txt)
-        titUR.set_text(fr"$q'$ on {CFG.THETA_LEVEL:.0f} K  "
-                       fr"(green dashed = $\theta_{{obs}}$;  "
-                       fr"cyan = $\theta_{{pred}}$, stretched $\pm 1h$)"
-                       "\n" + pv_contour_txt)
-        titL.set_text(r"$\partial q/\partial t$ (centered diff)")
-        titR.set_text(
-            f"$F_{{DEF}}$ ({basis_note} basis, polarity={polarity})\n"
-            f"$\\alpha$={alpha[i]:+5.1f}  "
-            f"$\\theta_{{obs}}$={theta_obs[i]:+5.1f}  "
-            f"$\\theta_{{pred}}$={theta_pred[i]:+5.1f}  "
-            f"A={A[i]:.2e}  a/b stretch $\\times${stretch:.2f}")
-        sup.set_text(f"{lc.upper()}  {polarity}  Lagrangian composite on "
-                     fr"$\theta$={CFG.THETA_LEVEL:.0f} K "
-                     f"(green=$\\theta_{{obs}}$, "
-                     f"cyan=$\\theta_{{pred}}$, magenta=$\\alpha$)")
-        return (imUL, imUR, imL, imR,
-                ell_obs_UR, ell_pred_UR, ell_pred_R, line_alpha)
-
-    anim = FuncAnimation(fig, update, frames=len(valid),
-                         blit=False, interval=1000 // CFG.ANIM_FPS)
-    out_mp4 = plots / f"tilt_animation_{polarity}.mp4"
-    written = _save_anim(anim, out_mp4, fps=CFG.ANIM_FPS)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(t_hour, theta_obs_cont, "g-", lw=2, label="obs")
+    ax.plot(t_hour, theta_pred_cont, "c--", lw=1.5, label="pred (+1 h)")
+    ax.set_xlabel("composite hour"); ax.set_ylabel("θ tilt [deg, unwrapped]")
+    ax.set_title(f"{lc.upper()} {method}/{polarity}  ellipse tilt")
+    ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(plots / f"theta_tilt_{polarity}.png", dpi=140)
     plt.close(fig)
-    print(f"[{lc}:{polarity}] wrote {out_png}, {out_accum}, {written}  "
-          f"({len(valid)} frames)")
+
+    # accumulated wrap-aware delta
+    dth_obs = np.zeros(nt); dth_pred = np.zeros(nt)
+    for i in range(1, nt):
+        if np.isfinite(theta_obs[i]) and np.isfinite(theta_obs[i-1]):
+            dth_obs[i] = dth_obs[i-1] + _wrap_diff(theta_obs[i],
+                                                    theta_obs[i-1])
+        else:
+            dth_obs[i] = dth_obs[i-1]
+        if np.isfinite(theta_pred[i-1]) and np.isfinite(theta_obs[i-1]):
+            dth_pred[i] = dth_pred[i-1] + _wrap_diff(theta_pred[i-1],
+                                                      theta_obs[i-1])
+        else:
+            dth_pred[i] = dth_pred[i-1]
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(t_hour, dth_obs, "g-", lw=2, label="∑Δθ obs")
+    ax.plot(t_hour, dth_pred, "c--", lw=1.5, label="∑Δθ pred")
+    ax.set_xlabel("composite hour")
+    ax.set_ylabel("accumulated tilt change [deg]")
+    ax.set_title(f"{lc.upper()} {method}/{polarity}  accumulated tilt")
+    ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(plots / f"theta_tilt_accum_{polarity}.png", dpi=140)
+    plt.close(fig)
+
+    # ----- 4-panel animation
+    _make_animation(lc, method, polarity, q, qa, pv_dt, deform_field,
+                    X, Y, x_rel, y_rel,
+                    t_hour, theta_obs, a_obs, b_obs, xc_obs, yc_obs,
+                    theta_pred, a_pred, b_pred, xc_pred, yc_pred,
+                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots)
+    print(f"[{lc}:{method}:{polarity}] wrote tilt outputs in {plots}")
+
+
+def _ellipse_axis_endpoints(xc, yc, a, theta_deg):
+    """Major-axis endpoints (length 2a)."""
+    th = np.deg2rad(theta_deg)
+    dx = a * np.cos(th); dy = a * np.sin(th)
+    return (xc - dx, xc + dx), (yc - dy, yc + dy)
+
+
+def _make_animation(lc, method, polarity,
+                    q, qa, pv_dt, deform_field,
+                    X, Y, x_rel, y_rel, t_hour,
+                    theta_obs, a_obs, b_obs, xc_obs, yc_obs,
+                    theta_pred, a_pred, b_pred, xc_pred, yc_pred,
+                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots):
+    nt = q.shape[0]
+    # Robust colour limits
+    pct = CFG.PCTL_CBAR
+    vmax_q = float(np.nanpercentile(np.abs(q), pct))
+    vmax_qa = float(np.nanpercentile(np.abs(qa), pct))
+    vmax_dt = float(np.nanpercentile(np.abs(pv_dt[np.isfinite(pv_dt)]), pct)
+                    if np.isfinite(pv_dt).any() else 1.0)
+    vmax_def = float(np.nanpercentile(
+        np.abs(deform_field[np.isfinite(deform_field)]), pct)
+        if np.isfinite(deform_field).any() else vmax_dt)
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9), constrained_layout=True)
+    (ax_ul, ax_ur), (ax_ll, ax_lr) = axes
+
+    def _frame(i):
+        for ax in axes.flat:
+            ax.clear()
+        # UL: total field shading + obs ellipse + axis
+        ax_ul.pcolormesh(X, Y, q[i], cmap="RdBu_r",
+                         vmin=-vmax_q, vmax=vmax_q, shading="auto")
+        ax_ul.set_title(f"q ({method}) t={int(t_hour[i])}h")
+        # UR: anomaly shading, total contour
+        ax_ur.pcolormesh(X, Y, qa[i], cmap="RdBu_r",
+                         vmin=-vmax_qa, vmax=vmax_qa, shading="auto")
+        try:
+            lvs = np.linspace(np.nanpercentile(q[i], 10),
+                              np.nanpercentile(q[i], 90), 7)
+            ax_ur.contour(X, Y, q[i], levels=lvs, colors="grey",
+                          linewidths=0.6, alpha=0.7)
+        except Exception:
+            pass
+        ax_ur.set_title(f"q' shading + q contour")
+        # LL: pv_dt with strict mask as black dashed contour
+        if np.isfinite(pv_dt[i]).any():
+            ax_ll.pcolormesh(X, Y, pv_dt[i], cmap="RdBu_r",
+                             vmin=-vmax_dt, vmax=vmax_dt, shading="auto")
+        if polarity == "C":
+            mfield = qa[i] - fit_thr
+        else:
+            mfield = -qa[i] - fit_thr
+        try:
+            ax_ll.contour(X, Y, mfield, levels=[0.0], colors="k",
+                          linewidths=1.2, linestyles="--")
+        except Exception:
+            pass
+        ax_ll.set_title(r"$\partial q/\partial t$ + mask")
+        # LR: deformation tendency  -gamma1*phi4 - gamma2*phi5
+        if np.isfinite(deform_field[i]).any():
+            ax_lr.pcolormesh(X, Y, deform_field[i], cmap="RdBu_r",
+                             vmin=-vmax_def, vmax=vmax_def,
+                             shading="auto")
+        ax_lr.set_title(r"def: $-\gamma_1\phi_4 - \gamma_2\phi_5$")
+
+        # ellipse + major axis on every panel
+        for ax in axes.flat:
+            ax.set_aspect("equal")
+            ax.set_xlim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
+            ax.set_ylim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
+            ax.axhline(0, color="k", lw=0.3, alpha=0.4)
+            ax.axvline(0, color="k", lw=0.3, alpha=0.4)
+            # guard circle
+            circ = plt.Circle((0, 0), guard_r, fill=False,
+                              color="k", lw=0.4, ls=":")
+            ax.add_patch(circ)
+            if np.isfinite(theta_obs[i]):
+                e = Ellipse((xc_obs[i], yc_obs[i]),
+                            2 * a_obs[i], 2 * b_obs[i],
+                            angle=theta_obs[i],
+                            fill=False, edgecolor="green", lw=2.0)
+                ax.add_patch(e)
+                xs, ys = _ellipse_axis_endpoints(
+                    xc_obs[i], yc_obs[i], a_obs[i], theta_obs[i])
+                ax.plot(xs, ys, "g-", lw=1.6)
+            if np.isfinite(theta_pred[i]):
+                e = Ellipse((xc_pred[i], yc_pred[i]),
+                            2 * a_pred[i], 2 * b_pred[i],
+                            angle=theta_pred[i],
+                            fill=False, edgecolor="cyan", lw=1.4,
+                            linestyle="--")
+                ax.add_patch(e)
+                xs, ys = _ellipse_axis_endpoints(
+                    xc_pred[i], yc_pred[i], a_pred[i], theta_pred[i])
+                ax.plot(xs, ys, "c--", lw=1.2)
+        fig.suptitle(
+            f"{lc.upper()} {method}/{polarity}  "
+            f"t={int(t_hour[i])}h  "
+            f"θ_obs={theta_obs[i]:+.1f}° "
+            f"θ_pred={theta_pred[i]:+.1f}°"
+            if np.isfinite(theta_obs[i]) else
+            f"{lc.upper()} {method}/{polarity}  t={int(t_hour[i])}h",
+            fontsize=11)
+        return []
+
+    anim = FuncAnimation(fig, _frame, frames=range(nt), blit=False,
+                         interval=1000 / CFG.ANIM_FPS)
+    out_mp4 = plots / f"tilt_animation_{polarity}.mp4"
+    writer = FFMpegWriter(fps=CFG.ANIM_FPS, bitrate=2200)
+    anim.save(out_mp4, writer=writer, dpi=110)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
+    ap.add_argument("--method", default=None)
     ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
     args = ap.parse_args()
+    methods = [args.method] if args.method else CFG.METHODS
     pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
     for lc in args.lcs:
-        for pol in pols:
-            process(lc, polarity=pol)
+        for m in methods:
+            for pol in pols:
+                process(lc, m, polarity=pol)

@@ -1,0 +1,30 @@
+{
+  "lc": "lc1",
+  "winner": "zeta250",
+  "auto_winner": "zeta250",
+  "forced": true,
+  "methods": {
+    "pv330": {
+      "score_C_mean_abs_deg": 6.923034569170775,
+      "score_AC_mean_abs_deg": 3.0368834142283676,
+      "n_C": 91,
+      "n_AC": 5,
+      "score_total": 9.959917983399142
+    },
+    "zeta250": {
+      "score_C_mean_abs_deg": 1.502314503953077,
+      "score_AC_mean_abs_deg": 1.2935865762479102,
+      "n_C": 89,
+      "n_AC": 95,
+      "score_total": 2.795901080200987
+    },
+    "theta_pv2": {
+      "score_C_mean_abs_deg": 5.647198284648501,
+      "score_AC_mean_abs_deg": 13.284728146373899,
+      "n_C": 51,
+      "n_AC": 80,
+      "score_total": 18.9319264310224
+    }
+  },
+  "metric": "mean |\u0394\u03b8_obs - \u0394\u03b8_pred| per step, wrapped to (-90,90]"
+}

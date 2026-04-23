@@ -1,63 +1,99 @@
 """Shared configuration for the Thorncroft RWB projection/tilt pipeline.
 
-One authoritative place for knobs that the tracking, composite, basis
-projection, and tilt-diagnostics scripts all consume.  Changing a
-value here propagates to every downstream script.
-
-Key design points:
-
-- **Fixed-latitude Lagrangian patch.**  The patch follows the tracked
-  longitude, but its absolute latitude band is held fixed at
-  ``[LAT_MIN, LAT_MAX]`` = 35°..75°N, centred on ``CENTER_LAT = 55°N``.
-  At 1° resolution and ``PATCH_HALF = 20``, this gives a 41×41 grid
-  with ``y_rel ∈ {-20..+20}°``, ``abs_lat = CENTER_LAT + y_rel``.
-  Track points whose own latitude sits near the edges stay inside the
-  patch and feed their features into the composite.
-
-- **Optional rotation symmetrization.**  ``SYMMETRIZE = False`` runs
-  the basis construction directly on the raw peak-hour q' field; set
-  ``True`` to re-enable the 36×10° rotation averaging introduced in
-  earlier rounds.
-
-- **Tracking thresholds.**  Both polarities use |q'| > 0.1 PVU:
-  Cyclonic `q' >  POS_THRESH` and Anticyclonic `q' < -NEG_THRESH`,
-  with the DetectBlobs area floor at ``AREA_MIN_KM2 = 5e5 km^2``.
+v2.3.0: three-method tracking comparison (zeta250, pv330, theta_pv2).
+Per-method DetectNodes thresholds + closed-contour deltas live in
+``METHOD``. Day-6..10 window. Basis anchored at first track frame
+(most circular). No symmetrize.
 """
 from __future__ import annotations
 
 # --- Lagrangian patch geometry ---
-PATCH_HALF = 30        # degrees; half-width in x and y (±30 deg)
+PATCH_HALF = 40        # degrees; half-width in x/y (±40°) — wider so even
+                       # elongated late-stage anomalies fit without truncation
 DX = 1.0               # degrees; grid spacing
-CENTER_LAT = 55.0      # approximate reference lat (for dx metric only)
-LAT_MIN = 35.0         # degrees N; DetectNodes/DetectBlobs search domain
-LAT_MAX = 75.0         # degrees N; DetectNodes/DetectBlobs search domain
+CENTER_LAT = 50.0      # approximate reference lat (for dx metric only)
+LAT_MIN = 25.0         # degrees N; DetectNodes search domain (30-70 N + 5° slack)
+LAT_MAX = 75.0
 
-# --- Tempest thresholds ---
-POS_THRESH = 0.0       # PVU; C detection: q' > POS_THRESH  (pure sign cut)
-NEG_THRESH = 0.0       # PVU; AC detection: q' < -NEG_THRESH (pure sign cut)
-AREA_MIN_KM2 = 5.0e5   # DetectBlobs area floor, km^2
-MERGE_DIST_DEG = 8.0   # DetectNodes --mergedist
-STITCH_RANGE_DEG = 7.0 # StitchNodes --range (deg between hourly steps)
-STITCH_MAXGAP   = "12h"  # StitchNodes --maxgap
-SPAN_REQ_H = 90        # minimum track lifespan in hours
-
-# --- Selection ---
-JUMP_MAX_DEG_PER_H = 7.0  # max hourly great-circle jump (selector)
+# --- Common stitch / selection ---
+MERGE_DIST_DEG = 6.0   # DetectNodes --mergedist
+STITCH_RANGE_DEG = 5.0 # StitchNodes --range
+STITCH_MAXGAP = "6h"
+SPAN_REQ_H = 36   # 1.5 days; window is only 96h, longer eats real tracks        # minimum track lifespan in hours (96h window)
+JUMP_MAX_DEG_PER_H = 7.0
 TOP_N = 6
 
-# --- Time window (hours since 2000-01-01 00 UTC) ---
-WINDOW_START_HOUR = 6 * 24     # day 6 = hour 144
-WINDOW_END_HOUR = 13 * 24      # day 13 = hour 312 (inclusive)
-N_COMPOSITE_HOURS = 145        # 145 hourly frames: 0..144 over 6 days
+# --- Per-LC composite window (hours since 2000-01-01 00 UTC) ---
+# LC1 day 6..10 (hours 144..240), LC2 day 8..12 (hours 192..288).
+# Each window covers 96 h => N_COMPOSITE_HOURS = 97 frames.
+WINDOW_BY_LC = {
+    "lc1": (6 * 24, 10 * 24),
+    "lc2": (8 * 24, 12 * 24),
+}
+# Backward-compatible defaults (used when no LC tag is available; equal LC1).
+WINDOW_START_HOUR = WINDOW_BY_LC["lc1"][0]
+WINDOW_END_HOUR   = WINDOW_BY_LC["lc1"][1]
+N_COMPOSITE_HOURS = WINDOW_END_HOUR - WINDOW_START_HOUR + 1   # 97 frames
+
+
+def window_for(lc: str) -> tuple[int, int]:
+    """Inclusive (start_hour, end_hour) window for a given LC tag."""
+    return WINDOW_BY_LC.get(lc, (WINDOW_START_HOUR, WINDOW_END_HOUR))
+
+# --- Method registry ---
+# Sign convention for closedcontourcmd:
+#   searchbymax requires NEGATIVE delta (field decreases outward),
+#   searchbymin requires POSITIVE delta (field increases outward).
+METHOD = {
+    "pv330": {
+        "var": "pv_anom_330",
+        "total_var": "pv330",
+        "input_nc": "pv330_anom.nc",
+        "units": "PVU",
+        "mask_thresh": 0.15,
+        "C":  {"search": "max", "thresh": (">",  0.15),
+               "ccdelta": -0.01, "ccdist": 5.0},
+        "AC": {"search": "min", "thresh": ("<", -0.15),
+               "ccdelta": 0.01,  "ccdist": 5.0},
+    },
+    "zeta250": {
+        "var": "zeta_anom_250",
+        "total_var": "zeta_250",
+        "input_nc": "zeta250_anom.nc",
+        "units": "1/s",
+        "mask_thresh": 8.0e-6,
+        "C":  {"search": "max", "thresh": (">",  8.0e-6),
+               "ccdelta": -5.0e-7, "ccdist": 5.0},
+        "AC": {"search": "min", "thresh": ("<", -8.0e-6),
+               "ccdelta": 5.0e-7,  "ccdist": 5.0},
+    },
+    "theta_pv2": {
+        # Low theta on the dynamical tropopause = high-PV cyclonic intrusion.
+        # Keep "C" = physical cyclone => theta' negative => searchbymin.
+        "var": "theta_anom_pv2",
+        "total_var": "theta_pv2",
+        "input_nc": "theta_pv2_anom.nc",
+        "units": "K",
+        "mask_thresh": 3.0,
+        "C":  {"search": "min", "thresh": ("<", -3.0),
+               "ccdelta": 0.25,  "ccdist": 5.0},
+        "AC": {"search": "max", "thresh": (">",  3.0),
+               "ccdelta": -0.25, "ccdist": 5.0},
+    },
+}
+METHODS = list(METHOD.keys())
+THETA_LEVEL = 330.0
+PRESSURE_LEVEL_ZETA = 25000.0   # Pa (250 hPa)
 
 # --- Basis / projection ---
-THETA_LEVEL = 330.0    # isentropic surface for q
-SYMMETRIZE = True      # if True, average 36 rotations (10° step) at peak hour
-N_ROT = 36             # used when SYMMETRIZE=True (360° / N_ROT step)
-SMOOTHING_DEG = 3.0    # Gaussian smoothing width passed to pvtend
-INCLUDE_LAP = False    # whether pvtend basis includes the Laplacian basis
+SYMMETRIZE = False
+N_ROT = 36
+SMOOTHING_DEG = 3.0
+INCLUDE_LAP = False
+ANCHOR_FRAME = "first"  # "first" = most-circular onset; "peak" = legacy
 
 # --- Tilt animation ---
 ANIM_FPS = 8
-PCTL_CBAR = 95.0       # lower-row colour bars clip at this percentile of |·|
-DT_PRED_HOURS = 1.0    # forward-Euler prediction horizon for tilt_animation
+PCTL_CBAR = 95.0
+DT_PRED_HOURS = 1.0
+GUARD_PAD_DEG = 5.0     # ellipse mask must lie within PATCH_HALF - GUARD_PAD_DEG

@@ -143,44 +143,90 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow
+## Workflow (v2.3 — 3-method comparator + per-LC window)
+
+For each LC the *circular-vortex* segment of the simulation is tracked
+with **three independent TempestExtremes pipelines** (PV-anomaly on
+330 K, relative-vorticity anomaly on 250 hPa, and θ-deviation on the
+2 PVU surface). All three feed identical Lagrangian composite +
+5-basis decomposition + tilt-evolution machinery, and a final
+`compare_methods.py` step picks the method whose 1-h tilt forecast
+best aligns with the observed tilt evolution. A single mp4 of the
+winning method is rendered per LC.
+
+**Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
+- `lc1` → day **6 → 10** (hours 144..240)
+- `lc2` → day **8 → 12** (hours 192..288)
+
+Each window covers 96 h → **97 hourly composite frames**. LC2 starts
+later because LC2's barotropic, circular vortex matures on day 8.
+The same comparator picks `zeta250` as the winning method for both
+LCs (use `--force zeta250` on `compare_methods.py` to lock that
+choice).
 
 ```mermaid
 graph TD
     A[config/lc1.toml, config/lc2.toml] --> B[scripts/run_lc.jl]
-    B -->|SpeedyWeather.jl<br/>T95, 15 &sigma;-levels, 16 days| C[outputs/&lt;lc&gt;/raw/run_*/output.nc]
+    B -->|SpeedyWeather.jl, T95, 17 days| C[outputs/&lt;lc&gt;/raw/run_*/output.nc]
     C --> D[scripts/postprocess.py]
     D --> E[outputs/&lt;lc&gt;/processed.nc]
-    E --> F1[plotting/thorncroft_figs.py]
-    E --> F2[plotting/make_figures.py]
-    F1 --> G1[outputs/&lt;lc&gt;/plots/paper_fig*.png]
-    F2 --> G2[outputs/&lt;lc&gt;/mp4/*.mp4]
 
-    E --> H[scripts/prep_pv330_anom.py<br/>&theta;=330 K PV, anomaly wrt zonal mean]
-    H --> I[outputs/&lt;lc&gt;/pv330_anom.nc]
+    CFG[scripts/_config.py<br/>METHOD dict, day 6..10 window,<br/>strict thresholds, ANCHOR_FRAME=first] -.-> H
+    CFG -.-> J & L & EXP & N & P & R & W
 
-    CFG[scripts/_config.py<br/>shared constants<br/>patch, thresholds, stitch, symm, cbar] -.-> J
-    CFG -.-> L
-    CFG -.-> EXP
-    CFG -.-> N
-    CFG -.-> P
-    CFG -.-> R
-
-    I --> J[scripts/run_tempest_pv330.sh<br/>DetectNodes +Max/-Min, +/-0.1 PVU<br/>StitchNodes range=7&deg; span>=90h maxgap=6h<br/>DetectBlobs area>=5e5 km&sup2;<br/>lat 35-75&deg;N]
-    J --> K1[tracks_max_pv330.txt  +  tracks_min_pv330.txt<br/>blobs_pv330_&#123;pos,neg&#125;.nc]
-    K1 --> L[scripts/select_top6.py<br/>rank by peak &#124;q'&#124; &times; span,<br/>trim to common window per polarity]
-    L --> M[tracks_&#123;max,min&#125;_top6_pv330.txt]
+    E --> H[scripts/prep_track_inputs.py<br/>build 3 anomaly NetCDFs]
+    H --> I1[pv330_anom.nc]
+    H --> I2[zeta250_anom.nc]
+    H --> I3[theta_pv2_anom.nc]
+    I1 & I2 & I3 --> J[scripts/run_tempest.sh<br/>per LC &times; 3 methods &times; C/AC]
+    J --> K[tracks/&lt;method&gt;/tracks_&#123;C,AC&#125;.txt]
+    K --> L[scripts/select_top6.py]
+    L --> M[tracks/&lt;method&gt;/tracks_&#123;C,AC&#125;_top6.txt]
     M --> EXP[scripts/export_track_csv.py]
-    EXP --> CSV[track_centers_&#123;C,AC&#125;.csv]
-    CSV --> N[scripts/build_composites.py<br/>track-centred 61&times;61 patch,<br/>lon &amp; lat both relative &plusmn;30&deg;, 145 hourly frames]
-    N --> O[composites/&#123;C,AC&#125;_composite.nc]
-    O --> P[scripts/project_composite.py<br/>pvtend 5-basis &#40;F_INT F_DEF F_PROP LAP I&#41;<br/>mask q'>0 C / q'<0 AC]
-    P --> Q[decomp_&#123;C,AC&#125;.png<br/>decomp_bases_&#123;C,AC&#125;.png]
-    O --> R[scripts/tilt_evolution.py<br/>1-h forecast ellipse vs observed,<br/>cumulative &Delta;&theta; figure,<br/>MP4 animation]
-    R --> S[theta_tilt_&#123;C,AC&#125;.png<br/>theta_tilt_accum_&#123;C,AC&#125;.png<br/>tilt_animation_&#123;C,AC&#125;.mp4]
-    K1 --> T[plotting/make_pv330_tracked_gif.py<br/>dual-polarity overlay]
-    T --> U[outputs/&lt;lc&gt;/plots/pv330_tracked.gif]
+    EXP --> CSV[tracks/&lt;method&gt;/track_centers_&#123;C,AC&#125;.csv]
+    CSV --> N[scripts/build_composites.py<br/>track-centred 81&times;81 patch &plusmn;40&deg;,<br/>day 6..10, total + anom per method]
+    N --> O[composites/&lt;method&gt;/&#123;C,AC&#125;_composite.nc]
+    O --> P[scripts/project_composite.py<br/>5-basis decomp anchored at FIRST<br/>valid hour, no symmetrization]
+    P --> Q[projections/&lt;method&gt;/plots/decomp_*.png]
+    O --> R[scripts/tilt_evolution.py<br/>strict mask + ellipse + major axis,<br/>UR panel: q&prime; shading + q contour]
+    R --> S[projections/&lt;method&gt;/plots/<br/>theta_tilt_*.png, tilt_animation_*.mp4]
+    R --> SD[projections/&lt;method&gt;/data/tilt_&#123;C,AC&#125;.npz]
+    SD --> CMP[scripts/compare_methods.py<br/>min mean &#124;&Delta;&theta;_obs - &Delta;&theta;_pred&#124; per step]
+    CMP --> WIN[projections/winner.json + projections/best/]
+    WIN --> W[plotting/make_tracked_anim.py<br/>winner only, mp4 only]
+    W --> WPMP[outputs/&lt;lc&gt;/plots/&lt;winner&gt;_tracked.mp4]
 ```
+
+### Three tracking methods (all evaluated, best-aligned wins)
+
+| Tag | Field | Sign convention (C / AC) | `mask_thresh` |
+| --- | ----- | ------------------------ | ------------- |
+| `pv330`     | $q'_{330\,K}$ (PV anomaly on 330 K isentrope) | C: searchbymax(`>+0.15 PVU`), AC: searchbymin(`<-0.15 PVU`) | 0.15 PVU |
+| `zeta250`   | $\zeta'_{250\,hPa}$ (relative-vorticity anomaly) | C: searchbymax(`>+8e-6 s⁻¹`), AC: searchbymin(`<-8e-6 s⁻¹`) | 8e-6 s⁻¹ |
+| `theta_pv2` | $\theta'_{2\,PVU}$ (potential-temperature deviation on 2 PVU) | C: searchbymin(`<-3 K`), AC: searchbymax(`>+3 K`) | 3 K |
+
+Tracks are constrained to 25–75°N, span ≥ 36 h, max 7° h⁻¹ jump, and the
+top-6 per polarity are picked combinatorially to maximise common
+overlap window before being trimmed to that window.
+
+### Anchor & ellipse fit
+
+- **Basis anchor** = first hour where ≥ 90 % of the 81×81 patch is
+  finite (interpreted as the most-circular onset). `SYMMETRIZE=False`
+  in v2.3, so the basis sees the raw asymmetric onset blob.
+- **Ellipse fit** uses signed-anomaly mask (C: $q' > +\text{thr}$,
+  AC: $q' < -\text{thr}$) AND a guard circle of radius
+  $\text{PATCH_HALF} - \text{GUARD_PAD_DEG} = 35^{\circ}$ to exclude
+  any tropical tail. Weighted-covariance second moments give
+  $(\theta, a, b, x_c, y_c)$, with $\theta \in [-90, 90)^{\circ}$.
+  Major-axis line of length $2a$ at angle $\theta$ through
+  $(x_c, y_c)$ is drawn on every animation frame (green = obs,
+  cyan dashed = 1-h prediction).
+- **Method comparator** scores each method by mean wrap-aware
+  $|\Delta\theta_{\text{obs}} - \Delta\theta_{\text{pred}}|$ (C+AC),
+  picks the smallest, writes `projections/winner.json`, and
+  symlinks `projections/best/` to the winner's `plots/`. Only that
+  method's `tracked.mp4` is rendered.
 
 ## Reproducing Thorncroft 1993 RWB tracking
 
@@ -259,15 +305,36 @@ post-processing chain.
 
 ```bash
 cd /net/flood/data2/users/x_yan/barotropic_vorticity_model/thorncroft_rwb
-micromamba run -n blocking python scripts/prep_pv330_anom.py lc1 lc2
-bash scripts/run_tempest_pv330.sh lc1
-bash scripts/run_tempest_pv330.sh lc2
-micromamba run -n blocking python scripts/select_top6.py          # both polarities
-micromamba run -n blocking python scripts/export_track_csv.py
-micromamba run -n blocking python scripts/build_composites.py
-micromamba run -n blocking python scripts/project_composite.py
-micromamba run -n blocking python scripts/tilt_evolution.py
-micromamba run -n blocking python plotting/make_pv330_tracked_gif.py
+ENV=blocking          # has pvtend, xarray, TempestExtremes wrappers
+
+# 1. Build per-LC anomaly NetCDFs for the 3 tracking methods
+#    (LC1 → day 6..10, LC2 → day 8..12, see WINDOW_BY_LC)
+micromamba run -n $ENV python scripts/prep_track_inputs.py lc1 lc2
+
+# 2. Run TempestExtremes for each (LC, method, polarity)
+for lc in lc1 lc2; do
+  for m in pv330 zeta250 theta_pv2; do
+    bash scripts/run_tempest.sh $lc $m
+  done
+done
+
+# 3. Track curation, CSV export, Lagrangian composite
+micromamba run -n $ENV python scripts/select_top6.py        lc1 lc2
+micromamba run -n $ENV python scripts/export_track_csv.py   lc1 lc2
+micromamba run -n $ENV python scripts/build_composites.py   lc1 lc2
+
+# 4. 5-basis decomposition + ellipse-tilt evolution
+#    decomp_*.png has the strict ellipse mask as a black dashed contour
+#    on the ∂q/∂t panel.
+#    tilt_animation_*.mp4 LR panel shows -γ₁φ₄ - γ₂φ₅ (def tendency);
+#    LL panel overlays the same dashed mask on ∂q/∂t.
+micromamba run -n $ENV python scripts/project_composite.py  lc1 lc2
+micromamba run -n $ENV python scripts/tilt_evolution.py     lc1 lc2
+
+# 5. Method comparator + winning mp4
+#    Auto-pick by min mean |Δθ_obs - Δθ_pred|, OR force a method:
+micromamba run -n $ENV python scripts/compare_methods.py    lc1 lc2 --force zeta250
+micromamba run -n speedy_weather python plotting/make_tracked_anim.py lc1 lc2
 ```
 
 Tunable constants live in [`scripts/_config.py`](scripts/_config.py):
