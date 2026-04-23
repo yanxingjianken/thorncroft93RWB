@@ -56,11 +56,11 @@ def build(lc: str, polarity: str = "C"):
     x_rel = np.arange(-CFG.PATCH_HALF, CFG.PATCH_HALF + CFG.DX / 2, CFG.DX)
     y_rel = np.arange(-CFG.PATCH_HALF, CFG.PATCH_HALF + CFG.DX / 2, CFG.DX)
     nx, ny = len(x_rel), len(y_rel)
-    assert nx == 41 and ny == 41, (nx, ny)
+    expected = int(2 * CFG.PATCH_HALF / CFG.DX) + 1
+    assert nx == expected and ny == expected, (nx, ny, expected)
 
-    # Fixed absolute-latitude band:  CENTER_LAT + y_rel  -> 35..75 N
-    lat_abs = CFG.CENTER_LAT + y_rel
-    lat_q = xr.DataArray(lat_abs, dims="y")
+    # Per-timestep track-centred patch (both longitude AND latitude are
+    # relative to the tracked mass-centroid; no fixed lat band).
 
     n_members = 6
     t_hour = np.arange(CFG.N_COMPOSITE_HOURS, dtype="int16")
@@ -84,6 +84,7 @@ def build(lc: str, polarity: str = "C"):
             if ihour < 0 or ihour >= CFG.N_COMPOSITE_HOURS:
                 continue
             lon_q = xr.DataArray((row["lon"] + x_rel) % 360.0, dims="x")
+            lat_q = xr.DataArray(row["lat"] + y_rel, dims="y")
             ti_pv = int(np.argmin(np.abs(times_pv -
                                           np.datetime64(t_target))))
             ti_a = int(np.argmin(np.abs(times_a -
@@ -122,7 +123,6 @@ def build(lc: str, polarity: str = "C"):
             "t": ("t", t_hour),
             "y": ("y", y_rel.astype("float32")),
             "x": ("x", x_rel.astype("float32")),
-            "lat_abs": ("y", lat_abs.astype("float32")),
             "member": ("member", np.arange(n_members, dtype="int8")),
         },
         attrs={
@@ -131,10 +131,8 @@ def build(lc: str, polarity: str = "C"):
             "theta_K": float(CFG.THETA_LEVEL),
             "patch_half_deg": float(CFG.PATCH_HALF),
             "dx_deg": float(CFG.DX),
-            "center_lat": float(CFG.CENTER_LAT),
-            "lat_fixed_range": f"{CFG.LAT_MIN:.0f}-{CFG.LAT_MAX:.0f} N",
-            "frame": ("fixed-latitude (35..75 N), tracked-longitude "
-                      "Lagrangian patch"),
+            "frame": ("track-centred Lagrangian patch: x = lon - "
+                      "lon_track, y = lat - lat_track"),
             "time_origin": "hours since 2000-01-07T00:00:00",
         },
     )

@@ -172,7 +172,7 @@ graph TD
     L --> M[tracks_&#123;max,min&#125;_top6_pv330.txt]
     M --> EXP[scripts/export_track_csv.py]
     EXP --> CSV[track_centers_&#123;C,AC&#125;.csv]
-    CSV --> N[scripts/build_composites.py<br/>fixed-lat 41&times;41 patch,<br/>lon tracks, lat=55&deg;&plusmn;20&deg;, 145 hourly frames]
+    CSV --> N[scripts/build_composites.py<br/>track-centred 61&times;61 patch,<br/>lon &amp; lat both relative &plusmn;30&deg;, 145 hourly frames]
     N --> O[composites/&#123;C,AC&#125;_composite.nc]
     O --> P[scripts/project_composite.py<br/>pvtend 5-basis &#40;F_INT F_DEF F_PROP LAP I&#41;<br/>mask q'>0 C / q'<0 AC]
     P --> Q[decomp_&#123;C,AC&#125;.png<br/>decomp_bases_&#123;C,AC&#125;.png]
@@ -211,12 +211,14 @@ the $\theta = 330$ K isentrope from the SpeedyWeather runs:
   $\text{peak}\,|q'| \times \text{span}$ and trims the six survivors
   to the common $[\max t_{\text{start}}, \min t_{\text{end}}]$ window
   so every member contributes simultaneously.
-- **Fixed-latitude Lagrangian patch** (`scripts/build_composites.py`).
-  For each (track, hour) the 41&times;41 patch is sampled at
-  $(\lambda_0(t) + \Delta\lambda_j,\; 55^\circ\text{N} + \Delta\varphi_i)$
-  with $\Delta\lambda,\Delta\varphi \in [-20^\circ, +20^\circ]$ at
-  1&deg; spacing &mdash; so the patch translates zonally with the track
-  but its latitude is pinned to 35&ndash;75&deg;N. The 145-hour composite is
+- **Track-centred Lagrangian patch** (`scripts/build_composites.py`).
+  For each (track, hour) the 61&times;61 patch is sampled at
+  $(\lambda_0(t) + \Delta\lambda_j,\; \varphi_0(t) + \Delta\varphi_i)$
+  with $\Delta\lambda,\Delta\varphi \in [-30^\circ, +30^\circ]$ at
+  1&deg; spacing, where both $\lambda_0(t)$ and $\varphi_0(t)$ are the
+  $|q'|$-weighted mass centroid of the containing DetectBlobs component
+  (see [`filter_cand_by_blob.py`](scripts/filter_cand_by_blob.py)).
+  The 145-hour composite is
   $\bar q_{ijk} = \text{nanmean}_{m}\, q(\lambda_0^{(m)}(t_k) +
   \Delta\lambda_j,\, 55 + \Delta\varphi_i,\, t_k)$.
 - **5-basis decomposition** (`scripts/project_composite.py`).

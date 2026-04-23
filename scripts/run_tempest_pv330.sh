@@ -17,8 +17,8 @@ IN=$ROOT/outputs/$LC/pv330_anom.nc
 TRK=$ROOT/outputs/$LC/tracks
 mkdir -p "$TRK"
 
-POS_THRESH=${POS_THRESH:-0.1}   # PVU, C:  q' >  +POS_THRESH
-NEG_THRESH=${NEG_THRESH:-0.1}   # PVU, AC: q' <  -NEG_THRESH  (absolute value)
+POS_THRESH=${POS_THRESH:-0.0}   # PVU, C:  q' > POS_THRESH  (pure sign cut)
+NEG_THRESH=${NEG_THRESH:-0.0}   # PVU, AC: q' < -NEG_THRESH (pure sign cut)
 MIN_LAT=${MIN_LAT:-35.0}
 MAX_LAT=${MAX_LAT:-75.0}
 MERGE_DIST=${MERGE_DIST:-8.0}
@@ -57,7 +57,7 @@ $TE_BIN/DetectBlobs \
 
 CAND_POS_F=$TRK/cand_max_pv330_filt.txt
 micromamba run -n blocking python "$ROOT/scripts/filter_cand_by_blob.py" \
-  "$CAND_POS" "$BLOB_POS" "$CAND_POS_F" >> "$TRK/detect_pv330_pos.log" 2>&1
+  "$CAND_POS" "$BLOB_POS" "$CAND_POS_F" "$IN" >> "$TRK/detect_pv330_pos.log" 2>&1
 
 $TE_BIN/StitchNodes \
   --in "$CAND_POS_F" --out "$TRK_POS" \
@@ -95,7 +95,7 @@ $TE_BIN/DetectBlobs \
 
 CAND_NEG_F=$TRK/cand_min_pv330_filt.txt
 micromamba run -n blocking python "$ROOT/scripts/filter_cand_by_blob.py" \
-  "$CAND_NEG" "$BLOB_NEG" "$CAND_NEG_F" >> "$TRK/detect_pv330_neg.log" 2>&1
+  "$CAND_NEG" "$BLOB_NEG" "$CAND_NEG_F" "$IN" >> "$TRK/detect_pv330_neg.log" 2>&1
 
 $TE_BIN/StitchNodes \
   --in "$CAND_NEG_F" --out "$TRK_NEG" \

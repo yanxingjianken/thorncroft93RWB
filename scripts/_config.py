@@ -26,15 +26,15 @@ Key design points:
 from __future__ import annotations
 
 # --- Lagrangian patch geometry ---
-PATCH_HALF = 20        # degrees; half-width in x and y
+PATCH_HALF = 30        # degrees; half-width in x and y (±30 deg)
 DX = 1.0               # degrees; grid spacing
-CENTER_LAT = 55.0      # degrees N; fixed patch centre latitude
-LAT_MIN = 35.0         # degrees N; patch southern edge (= CENTER_LAT - PATCH_HALF)
-LAT_MAX = 75.0         # degrees N; patch northern edge (= CENTER_LAT + PATCH_HALF)
+CENTER_LAT = 55.0      # approximate reference lat (for dx metric only)
+LAT_MIN = 35.0         # degrees N; DetectNodes/DetectBlobs search domain
+LAT_MAX = 75.0         # degrees N; DetectNodes/DetectBlobs search domain
 
 # --- Tempest thresholds ---
-POS_THRESH = 0.1       # PVU; C detection threshold q' > +POS_THRESH
-NEG_THRESH = 0.1       # PVU; AC detection threshold q' < -NEG_THRESH
+POS_THRESH = 0.0       # PVU; C detection: q' > POS_THRESH  (pure sign cut)
+NEG_THRESH = 0.0       # PVU; AC detection: q' < -NEG_THRESH (pure sign cut)
 AREA_MIN_KM2 = 5.0e5   # DetectBlobs area floor, km^2
 MERGE_DIST_DEG = 8.0   # DetectNodes --mergedist
 STITCH_RANGE_DEG = 7.0 # StitchNodes --range (deg between hourly steps)
