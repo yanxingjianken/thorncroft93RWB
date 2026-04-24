@@ -61,6 +61,9 @@ def animate(lc: str, method: str, stride: int = 1,
 
     lat = pv["lat"].values
     lon = pv["lon"].values
+    # Extend lon by one column for periodic coverage so Cartopy contourf
+    # doesn't leave a gap / produce blank frames at the 0°/360° seam.
+    lon_wrap = np.append(lon, lon[0] + 360.0)
     times = pv["time"].values
     frames = list(range(0, len(times), stride))
 
@@ -82,7 +85,11 @@ def animate(lc: str, method: str, stride: int = 1,
                     transform=ax.transAxes)
     ax.gridlines(draw_labels=False, linewidth=0.3, alpha=0.4)
 
-    cf = [ax.contourf(lon, lat, pv.isel(time=0).values, levels=levels,
+    def _get_frame_data(frame_idx):
+        d = pv.isel(time=frame_idx).values
+        return np.concatenate([d, d[:, :1]], axis=1)
+
+    cf = [ax.contourf(lon_wrap, lat, _get_frame_data(0), levels=levels,
                       cmap=cmap, extend="both", transform=data_crs)]
     cb = fig.colorbar(cf[0], ax=ax, shrink=0.75, pad=0.05,
                       orientation="vertical")
@@ -91,9 +98,15 @@ def animate(lc: str, method: str, stride: int = 1,
     artists = []
 
     def draw(frame_idx):
-        for c in getattr(cf[0], "collections", [cf[0]]):
-            try: c.remove()
-            except Exception: pass
+        # Remove previous contourf using the modern API (matplotlib >= 3.8).
+        # ContourSet.remove() atomically removes all child collections;
+        # the old collections-iteration loop was fragile in mpl 3.10 because
+        # .collections is deprecated/removed and the fallback path could fail
+        # silently, leaving stale artists that produced blank frames.
+        try:
+            cf[0].remove()
+        except Exception:
+            pass
         for a in artists:
             try: a.remove()
             except Exception: pass
@@ -101,7 +114,7 @@ def animate(lc: str, method: str, stride: int = 1,
 
         t = times[frame_idx]; t_dt = to_dt(t)
         day = (t_dt - datetime(2000, 1, 1)).total_seconds() / 86400.0
-        cf[0] = ax.contourf(lon, lat, pv.isel(time=frame_idx).values,
+        cf[0] = ax.contourf(lon_wrap, lat, _get_frame_data(frame_idx),
                             levels=levels, cmap=cmap, extend="both",
                             transform=data_crs)
 
