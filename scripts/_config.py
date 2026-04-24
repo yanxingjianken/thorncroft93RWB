@@ -82,6 +82,11 @@ METHOD = {
     },
 }
 METHODS = list(METHOD.keys())
+# Canonical / preferred method for all downstream analysis.
+# pv330 and theta_pv2 are retained in METHOD for optional use but
+# zeta250 is the single authoritative track from which composites,
+# projections, and animations are produced by default.
+CANONICAL_METHOD = "zeta250"
 THETA_LEVEL = 330.0
 PRESSURE_LEVEL_ZETA = 25000.0   # Pa (250 hPa)
 

@@ -32,12 +32,19 @@ except Exception:
 def _setup_polar(ax):
     if not HAS_CARTOPY:
         return
+    import matplotlib.path as mpath
     ax.set_extent([-180, 180, 20, 90], crs=ccrs.PlateCarree())
     ax.coastlines(linewidth=0.3, color="gray")
     ax.gridlines(draw_labels=False, linewidth=0.3,
                  color="gray", alpha=0.6,
                  xlocs=np.arange(-180, 181, 30),
                  ylocs=np.arange(20, 91, 15))
+    # Restore the circular clip boundary that ax.clear() removes
+    # (cartopy does not re-apply it automatically after cla/clear).
+    theta = np.linspace(0, 2 * np.pi, 100)
+    verts = np.column_stack([0.5 + 0.5 * np.sin(theta),
+                              0.5 + 0.5 * np.cos(theta)])
+    ax.set_boundary(mpath.Path(verts), transform=ax.transAxes)
 
 
 def animate_field(field, title_prefix, out_path,
@@ -82,31 +89,29 @@ def animate_field(field, title_prefix, out_path,
     kw0 = dict(levels=levels, cmap=cmap, extend="both")
     if transform is not None:
         kw0["transform"] = transform
-    cf0 = ax.contourf(lon_w, lat, f0_w, **kw0)
-    cbar = fig.colorbar(cf0, ax=ax, orientation="horizontal",
+    cf_container = [ax.contourf(lon_w, lat, f0_w, **kw0)]
+    cbar = fig.colorbar(cf_container[0], ax=ax, orientation="horizontal",
                         shrink=0.75, pad=0.08, label=units)
     cbar.ax.tick_params(labelsize=9)
+    title_artist = ax.set_title(f"{title_prefix}  day {t_days[0]:.2f}")
 
     frame_idx = list(range(0, field.sizes["time"], max(1, int(frame_stride))))
     if frame_idx[-1] != field.sizes["time"] - 1:
         frame_idx.append(field.sizes["time"] - 1)
 
     def frame(i):
-        ax.clear()
-        if HAS_CARTOPY and polar:
-            _setup_polar(ax)
-        else:
-            ax.set_ylim(20, 90)
-            ax.set_xlabel("longitude [°E]")
-            ax.set_ylabel("latitude [°N]")
+        # Remove only the contourf layer — coastlines/gridlines stay put.
+        # (ax.clear() would erase the cartopy polar boundary; cf.remove()
+        # is the correct approach in matplotlib >= 3.8.)
+        cf_container[0].remove()
         f = np.nan_to_num(field.isel(time=i).values, nan=0.0)
         f_w = np.concatenate([f, f[:, :1]], axis=1)
         kw = dict(levels=levels, cmap=cmap, extend="both")
         if transform is not None:
             kw["transform"] = transform
-        cf = ax.contourf(lon_w, lat, f_w, **kw)
-        ax.set_title(f"{title_prefix}  day {t_days[i]:.2f}")
-        return [cf]
+        cf_container[0] = ax.contourf(lon_w, lat, f_w, **kw)
+        title_artist.set_text(f"{title_prefix}  day {t_days[i]:.2f}")
+        return [cf_container[0]]
 
     ani = animation.FuncAnimation(
         fig, frame, frames=frame_idx,

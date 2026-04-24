@@ -143,54 +143,41 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.3.1 — 3-method comparator + per-LC window)
+## Workflow (v2.4.0 — zeta250 canonical + lat-weighted ellipse)
 
-For each LC the *circular-vortex* segment of the simulation is tracked
-with **three independent TempestExtremes pipelines** (PV-anomaly on
-330 K, relative-vorticity anomaly on 250 hPa, and θ-deviation on the
-2 PVU surface). All three feed identical Lagrangian composite +
-5-basis decomposition + tilt-evolution machinery, and a final
-`compare_methods.py` step scores each method by how well its 1-h tilt
-forecast aligns with the observed tilt evolution. **All three methods'**
-`tracked.mp4` animations are rendered per LC so they can be compared
-visually — there is no symlinked "winner" directory. A
-`projections/winner.json` summary records the scores.
+From v2.4.0 onwards the pipeline uses **zeta250 as the sole canonical
+tracking method**. The `pv330` and `theta_pv2` pipelines remain in the
+codebase (and `scripts/_config.py::METHOD`) for optional use, but all
+default scripts, CLI flags, and outputs target `zeta250` only.  Their
+previously-committed outputs have been moved to `outputs/archive/`
+(on disk, not tracked by git).
 
-**v2.3.1 fixes** on top of v2.3.0:
+**v2.4.0 changes** on top of v2.3.1 / blank-frame fix:
 
-1. **Center-blob ellipse fit** — `scripts/tilt_evolution.py::_strict_mask`
-   now connected-component-labels the signed-threshold mask and keeps
-   only the component that contains (or is closest to) the patch
-   origin. This fixes misaligned ellipses on `pv330` patches that
-   contained multiple disjoint PV-anomaly cells, and removes most of
-   the earlier LC2 AC θ/a/b/pv_dt jumps which were caused by the
-   ellipse snapping onto an adjacent blob.
-2. **Pole reflection** — `scripts/build_composites.py` now reflects
-   sample points that overshoot the pole via
-   $(\lambda, \phi) \to (\lambda + 180^{\circ}, 180^{\circ} - \phi)$,
-   so LC2 tracks that push the ±40° patch north of 90°N no longer
-   leave NaN gashes.
-3. **Periodic lon extension** — the source field is padded with one
-   duplicate column on each side (at `lon[0]-360` and `lon[-1]+360`)
-   before `xarray.interp`, so patches that straddle the 0°/360°
-   meridian no longer NaN at the seam.
-4. **No winner symlink** — `scripts/compare_methods.py` keeps
-   `winner.json` but no longer creates `projections/best`, since we
-   render all 3 methods' tracked mp4s for side-by-side comparison.
-5. **Per-panel colorbars** — each of the 4 panels in
-   `tilt_animation_{C,AC}.mp4` now has its own colorbar, and
-   `decomp_{C,AC}.png` uses the central-component mask for the black
-   dashed contour overlay.
+1. **Latitude-weighted ellipse fit** — `scripts/tilt_evolution.py::_fit_ellipse`
+   now accepts an optional `lat_weight_2d` array and multiplies each
+   pixel's weight by $1/\cos(\phi)$ where
+   $\phi = \text{CENTER\_LAT} + y_\text{rel}$ (clipped to ±85°,
+   normalised so mean weight = 1). Pixels nearer the North Pole receive
+   heavier weight; tropical pixels receive lighter weight. Both the
+   observed-ellipse and the 1-h-prediction-ellipse calls now use this
+   weight.
+2. **`CANONICAL_METHOD = "zeta250"`** added to `scripts/_config.py`; all
+   script CLI defaults now point to this constant instead of looping
+   over all three methods.
+3. **`make_figures.py` blank-frame fix** — replaced `ax.clear()` with
+   `cf_container[0].remove()` (same fix applied earlier to
+   `make_tracked_anim.py`). The static cartopy coastlines/gridlines stay
+   persistent; only the contourf layer is swapped each frame.
+4. **Archive** — pv330 and theta_pv2 tracks, composites, projections, and
+   tracked-mp4s moved to `outputs/archive/` (`.gitignore`d); only
+   `zeta250_tracked.mp4` remains committed.
 
 **Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
 - `lc1` → day **6 → 10** (hours 144..240)
 - `lc2` → day **8 → 12** (hours 192..288)
 
-Each window covers 96 h → **97 hourly composite frames**. LC2 starts
-later because LC2's barotropic, circular vortex matures on day 8.
-The comparator scores all 3 methods (`pv330`, `zeta250`, `theta_pv2`)
-and picks `zeta250` as the best-aligned method for both LCs; the other
-two are still rendered so you can judge tilt evolution visually.
+Each window covers 96 h → **97 hourly composite frames**.
 
 ```mermaid
 graph TD
@@ -199,55 +186,54 @@ graph TD
     C --> D[scripts/postprocess.py]
     D --> E[outputs/&lt;lc&gt;/processed.nc]
 
-    CFG[scripts/_config.py<br/>METHOD dict, day 6..10 window,<br/>strict thresholds, ANCHOR_FRAME=first] -.-> H
-    CFG -.-> J & L & EXP & N & P & R & W
+    CFG[scripts/_config.py<br/>CANONICAL_METHOD=zeta250,<br/>METHOD dict, WINDOW_BY_LC,<br/>lat_weight 1/cos lat] -.-> H
+    CFG -.-> J & L & EXP & N & P & R & W & FIG
 
-    E --> H[scripts/prep_track_inputs.py<br/>build 3 anomaly NetCDFs]
-    H --> I1[pv330_anom.nc]
+    E --> H[scripts/prep_track_inputs.py<br/>build zeta250_anom.nc]
     H --> I2[zeta250_anom.nc]
-    H --> I3[theta_pv2_anom.nc]
-    I1 & I2 & I3 --> J[scripts/run_tempest.sh<br/>per LC &times; 3 methods &times; C/AC]
-    J --> K[tracks/&lt;method&gt;/tracks_&#123;C,AC&#125;.txt]
+    I2 --> J[scripts/run_tempest.sh<br/>per LC &times; C/AC]
+    J --> K[tracks/zeta250/tracks_&#123;C,AC&#125;.txt]
     K --> L[scripts/select_top6.py]
-    L --> M[tracks/&lt;method&gt;/tracks_&#123;C,AC&#125;_top6.txt]
+    L --> M[tracks/zeta250/tracks_&#123;C,AC&#125;_top6.txt]
     M --> EXP[scripts/export_track_csv.py]
-    EXP --> CSV[tracks/&lt;method&gt;/track_centers_&#123;C,AC&#125;.csv]
-    CSV --> N[scripts/build_composites.py<br/>track-centred 81&times;81 patch &plusmn;40&deg;,<br/>day 6..10, total + anom per method]
-    N --> O[composites/&lt;method&gt;/&#123;C,AC&#125;_composite.nc]
-    O --> P[scripts/project_composite.py<br/>5-basis decomp anchored at FIRST<br/>valid hour, no symmetrization]
-    P --> Q[projections/&lt;method&gt;/plots/decomp_*.png]
-    O --> R[scripts/tilt_evolution.py<br/>strict mask + ellipse + major axis,<br/>UR panel: q&prime; shading + q contour]
-    R --> S[projections/&lt;method&gt;/plots/<br/>theta_tilt_*.png, tilt_animation_*.mp4]
-    R --> SD[projections/&lt;method&gt;/data/tilt_&#123;C,AC&#125;.npz]
-    SD --> CMP[scripts/compare_methods.py<br/>min mean &#124;&Delta;&theta;_obs - &Delta;&theta;_pred&#124; per step]
-    CMP --> WIN[projections/winner.json]
-    O --> W[plotting/make_tracked_anim.py<br/>all 3 methods, mp4 only]
-    W --> WPMP[outputs/&lt;lc&gt;/plots/&lt;method&gt;_tracked.mp4<br/>&times; 3 methods]
+    EXP --> CSV[tracks/zeta250/track_centers_&#123;C,AC&#125;.csv]
+    CSV --> N[scripts/build_composites.py<br/>track-centred 81&times;81 patch &plusmn;40&deg;,<br/>total + anom]
+    N --> O[composites/zeta250/&#123;C,AC&#125;_composite.nc]
+    O --> P[scripts/project_composite.py<br/>5-basis decomp anchored at first<br/>valid hour]
+    P --> Q[projections/zeta250/plots/decomp_*.png]
+    O --> R[scripts/tilt_evolution.py<br/>center-blob mask + lat-weighted ellipse,<br/>1/cos lat pixel weight]
+    R --> S[projections/zeta250/plots/<br/>theta_tilt_*.png, tilt_animation_*.mp4]
+    R --> SD[projections/zeta250/data/tilt_&#123;C,AC&#125;.npz]
+    O --> W[plotting/make_tracked_anim.py<br/>zeta250 default]
+    W --> WPMP[outputs/&lt;lc&gt;/plots/zeta250_tracked.mp4]
+    E --> FIG[plotting/make_figures.py<br/>cf.remove fix, no ax.clear]
+    FIG --> MP4[outputs/&lt;lc&gt;/mp4/&#123;pv_330K,zeta_250hPa,<br/>theta_on_pv2,T_surface&#125;.mp4]
 ```
 
-### Three tracking methods (all evaluated, best-aligned wins)
+### Tracking method (canonical)
 
 | Tag | Field | Sign convention (C / AC) | `mask_thresh` |
 | --- | ----- | ------------------------ | ------------- |
-| `pv330`     | $q'_{330\,K}$ (PV anomaly on 330 K isentrope) | C: searchbymax(`>+0.15 PVU`), AC: searchbymin(`<-0.15 PVU`) | 0.15 PVU |
-| `zeta250`   | $\zeta'_{250\,hPa}$ (relative-vorticity anomaly) | C: searchbymax(`>+8e-6 s⁻¹`), AC: searchbymin(`<-8e-6 s⁻¹`) | 8e-6 s⁻¹ |
-| `theta_pv2` | $\theta'_{2\,PVU}$ (potential-temperature deviation on 2 PVU) | C: searchbymin(`<-3 K`), AC: searchbymax(`>+3 K`) | 3 K |
+| `zeta250`   | $\zeta'_{250\,\text{hPa}}$ (relative-vorticity anomaly) | C: searchbymax(`>+8e-6 s⁻¹`), AC: searchbymin(`<-8e-6 s⁻¹`) | 8e-6 s⁻¹ |
 
-Tracks are constrained to 25–75°N, span ≥ 36 h, max 7° h⁻¹ jump, and the
-top-6 per polarity are picked combinatorially to maximise common
-overlap window before being trimmed to that window.
+`pv330` and `theta_pv2` are defined in `scripts/_config.py::METHOD` and can
+be run optionally with `--method pv330` / `--method theta_pv2`; their
+outputs are not tracked by git (archived to `outputs/archive/`).
 
 ### Anchor & ellipse fit
 
 - **Basis anchor** = first hour where ≥ 90 % of the 81×81 patch is
-  finite (interpreted as the most-circular onset). `SYMMETRIZE=False`
-  in v2.3, so the basis sees the raw asymmetric onset blob.
+  finite (interpreted as the most-circular onset). `SYMMETRIZE=False`.
 - **Ellipse fit** uses signed-anomaly mask (C: $q' > +\text{thr}$,
   AC: $q' < -\text{thr}$) AND a guard circle of radius
   $\text{PATCH\_HALF} - \text{GUARD\_PAD\_DEG} = 35^{\circ}$, then
   **restricted to the connected component containing (or closest to)
-  the patch origin** so adjacent eddies cannot pull the fit off the
-  central vortex. Weighted-covariance second moments give
+  the patch origin**. Weighted-covariance second moments with
+  **latitude weight** $w_{ij} \propto 1/\cos(\phi_{ij})$ (normalised,
+  clipped at ±85°) give $(\theta, a, b, x_c, y_c)$ with
+  $\theta \in [-90, 90)^{\circ}$. The latitude weight emphasises
+  higher-latitude pixels, consistent with the physical importance of
+  near-polar flow in RWB dynamics.
   $(\theta, a, b, x_c, y_c)$, with $\theta \in [-90, 90)^{\circ}$.
   Major-axis line of length $2a$ at angle $\theta$ through
   $(x_c, y_c)$ is drawn on every animation frame (green = obs,

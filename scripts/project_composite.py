@@ -181,7 +181,7 @@ if __name__ == "__main__":
     ap.add_argument("--method", default=None)
     ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
     args = ap.parse_args()
-    methods = [args.method] if args.method else CFG.METHODS
+    methods = [args.method] if args.method else [CFG.CANONICAL_METHOD]
     pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
     for lc in args.lcs:
         for m in methods:

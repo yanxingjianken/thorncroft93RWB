@@ -159,8 +159,8 @@ if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
-    ap.add_argument("--methods", nargs="*", default=list(CFG.METHODS),
-                    help="Which methods to animate (default: all 3).")
+    ap.add_argument("--methods", nargs="*", default=[CFG.CANONICAL_METHOD],
+                    help="Which methods to animate (default: canonical zeta250).")
     args = ap.parse_args()
     for lc in args.lcs:
         for m in args.methods:

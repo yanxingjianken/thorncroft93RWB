@@ -89,12 +89,21 @@ def _strict_mask(anom: np.ndarray, polarity: str, thr: float,
 
 
 def _fit_ellipse(mask: np.ndarray, weights: np.ndarray,
-                 X: np.ndarray, Y: np.ndarray):
+                 X: np.ndarray, Y: np.ndarray,
+                 lat_weight_2d: np.ndarray | None = None):
     """Weighted-covariance ellipse over masked points.
+
+    Parameters
+    ----------
+    lat_weight_2d : optional 2-D array, same shape as mask.
+        Multiplicative latitude weight applied to |weights| before fitting.
+        Typically 1/cos(lat) so near-polar pixels get heavier weight.
 
     Returns (theta_deg ∈ [-90,90), a, b, xc, yc) or all NaN if too sparse.
     """
     w = np.where(mask, np.abs(weights), 0.0)
+    if lat_weight_2d is not None:
+        w = w * lat_weight_2d
     s = float(w.sum())
     if s <= 0 or mask.sum() < 8:
         return np.nan, np.nan, np.nan, np.nan, np.nan
@@ -188,6 +197,14 @@ def process(lc: str, method: str, polarity: str = "C"):
     dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
     dy_m = CFG.DX * M_PER_DEG
 
+    # Latitude weight for ellipse fit: 1/cos(lat) so pixels closer to the
+    # North Pole receive heavier weight than equatorial pixels.
+    # Latitude of each patch point ≈ CENTER_LAT + y_rel[j], clipped to ±85°
+    # to prevent 1/cos(90°) blow-up.  Normalized so mean weight = 1.
+    _lat_clipped = np.clip(CFG.CENTER_LAT + Y, -85.0, 85.0)
+    lat_weight_2d = 1.0 / np.cos(np.deg2rad(_lat_clipped))
+    lat_weight_2d /= lat_weight_2d.mean()
+
     # pv_dt centred difference of TOTAL field
     pv_dt = np.full_like(q, np.nan)
     pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * 3600.0)
@@ -211,7 +228,7 @@ def process(lc: str, method: str, polarity: str = "C"):
         if m.sum() < 8:
             continue
         mask_frames[i] = m
-        th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y)
+        th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y, lat_weight_2d)
         theta_obs[i] = th; a_obs[i] = a_; b_obs[i] = b_
         xc_obs[i] = xcc; yc_obs[i] = ycc
 
@@ -239,7 +256,7 @@ def process(lc: str, method: str, polarity: str = "C"):
         m2 = _strict_mask(qa_next, polarity, fit_thr, X, Y, guard_r)
         if m2.sum() < 8:
             continue
-        th2, a2, b2, xc2, yc2 = _fit_ellipse(m2, qa_next, X, Y)
+        th2, a2, b2, xc2, yc2 = _fit_ellipse(m2, qa_next, X, Y, lat_weight_2d)
         theta_pred[i] = th2; a_pred[i] = a2; b_pred[i] = b2
         xc_pred[i] = xc2; yc_pred[i] = yc2
 
@@ -441,7 +458,7 @@ if __name__ == "__main__":
     ap.add_argument("--method", default=None)
     ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
     args = ap.parse_args()
-    methods = [args.method] if args.method else CFG.METHODS
+    methods = [args.method] if args.method else [CFG.CANONICAL_METHOD]
     pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
     for lc in args.lcs:
         for m in methods:
