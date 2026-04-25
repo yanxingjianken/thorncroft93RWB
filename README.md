@@ -7,7 +7,7 @@ flat-topography runs with 15 σ-levels and ∇⁶ hyperdiffusion:
 | Run | Basic state Z                                     | Perturbation               |
 | --- | ------------------------------------------------- | -------------------------- |
 | LC1 | u₀=47 m/s mid-latitude jet (J&W 2006 thermal wind) | 1 mb wave-6 surface-pressure envelope |
-| LC2 | LC1 + barotropic +10/−10 m/s at 20°N/50°N         | same as LC1               |
+| LC2 | LC1 + barotropic +15/−15 m/s at 20°N/50°N         | same as LC1               |
 
 The LC1 basic state is the analytical **Jablonowski & Williamson (2006)**
 thermally-balanced zonal-wind field rescaled to peak at 47 m/s — chosen
@@ -134,7 +134,7 @@ Quick recipes:
 
 - **LC1** (anticyclonic, equatorward wrap) — `barotropic_add=false`.
 - **LC2** (cyclonic, poleward roll-up) — `barotropic_add=true`,
-  `bt_amp=10`.
+  `bt_amp=15`.
 - **LC1 with earlier breaking** — keep `barotropic_add=false`,
   set `perturbation.amplitude_mb=5.0` (still linear but wave reaches
   saturation ~2 days sooner).
@@ -175,7 +175,7 @@ previously-committed outputs have been moved to `outputs/archive/`
 
 **Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
 - `lc1` → day **6 → 10** (hours 144..240)
-- `lc2` → day **8 → 12** (hours 192..288)
+- `lc2` → day **7 → 11** (hours 168..264)
 
 Each window covers 96 h → **97 hourly composite frames**.
 
@@ -255,8 +255,8 @@ the $\theta = 330$ K isentrope from the SpeedyWeather runs:
   the baroclinic primitive equations with $\nabla^6$ hyperdiffusion
   (1 h damping on the smallest retained scale). Initial condition is
   the Jablonowski &amp; Williamson (2006) analytic jet rescaled to
-  $u_0 = 47$ m s$^{-1}$ plus a wave-6, 1 mb surface-pressure
-  perturbation; LC2 adds the $\pm 10$ m s$^{-1}$ barotropic addition
+  $\eta_0 = 0.252$ plus a wave-6, 1 mb surface-pressure
+  perturbation; LC2 adds the $\pm 15$ m s$^{-1}$ barotropic addition
   at 20&deg;/50&deg;N.
 - **[TempestExtremes](https://climate.ucdavis.edu/tempestextremes.php)**
   `DetectNodes` is run twice per LC: once with
@@ -447,7 +447,7 @@ analogues to `outputs/<lc>/plots/`:
   | dry, frictionless | yes | yes | ✔ |
   | initial perturbation | 1 mb wave-6 most-unstable mode | 1 mb wave-6 Gaussian envelope at 45°N ± 15° | **approx** (we seed with a broadband wave-6 bump rather than the exact normal-mode structure; onset is therefore ~1–2 d later) |
   | basic state Z1 | H&S 1975 analytic | J&W 2006 analytic, rescaled to u₀=47 m/s | **approx** (J&W 2006 is the modern analogue; peak wind and jet latitude match) |
-  | Z2 barotropic addition | ±10 m/s at 20°N/50°N | same | ✔ |
+  | Z2 barotropic addition | ±10 m/s at 20°N/50°N | ±15 m/s at 20°N/50°N | **stronger** (sharper cyclonic roll-up of PV on 330 K) |
   | Δt | not published | 15 min at T31 (→5 min at T95) | extra precaution for LC2 CFL |
 
 - ∇⁶ hyperdiffusion: SpeedyWeather's `HyperDiffusion.power` is the

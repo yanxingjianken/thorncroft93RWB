@@ -1,5 +1,5 @@
 # LC2 (Z2 basic state) — Thorncroft, Hoskins & McIntyre (1993, QJRMS)
-# Z2 = Z1 + barotropic zonal-wind addition (+10 m/s at 20°N, -10 m/s at 50°N).
+# Z2 = Z1 + barotropic zonal-wind addition (+15 m/s at 20°N, -15 m/s at 50°N).
 
 [grid]
 trunc = 95
@@ -21,7 +21,7 @@ dt_at_T31_minutes = 15
 u0 = 47.0
 eta0 = 0.252
 barotropic_add = true
-bt_amp = 10.0
+bt_amp = 15.0
 bt_lat_west = 20.0
 bt_lat_east = 50.0
 bt_width    = 10.0
