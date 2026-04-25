@@ -143,7 +143,7 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.7.0 — asymmetric patch ±30° lat × ±40° lon)
+## Workflow (v2.8.0 — backward-extended pre-onset tracking)
 
 From v2.4.0 onwards the pipeline uses **zeta250 as the sole canonical
 tracking method**. The `pv330` and `theta_pv2` pipelines remain in the
@@ -151,6 +151,34 @@ codebase (and `scripts/_config.py::METHOD`) for optional use, but all
 default scripts, CLI flags, and outputs target `zeta250` only.  Their
 previously-committed outputs have been moved to `outputs/archive/`
 (on disk, not tracked by git).
+
+**v2.8.0 changes** on top of v2.7.0:
+
+1. **`scripts/extend_backward.py`** — anchor on existing top-6 zeta250
+   tracks (start day 6 LC1 / day 8 LC2), linear-interp missing hours,
+   and **walk hour-by-hour backward** by following the local
+   ζ′ extremum within ±5° of the last centre. Backward walk gates:
+   `|ζ′| > 0.25 × mask_thresh` (= 2.0e-6), per-hour jump < 7°, and
+   cumulative drift from anchor < 25°. Stops as soon as any gate
+   fails. Writes:
+   - `tracks/zeta250_back/tracks_{C,AC}_top6.txt` and `track_centers_{C,AC}.csv`
+   - `composites/zeta250_back/{C,AC}_composite.nc`
+   - `projections/zeta250_back/plots/theta_tilt_{C,AC}*.png`,
+     `tilt_animation_{C,AC}.mp4`
+   - `plots/zeta250_tracked_extended_backward.mp4` (polar-cap zeta250
+     anim, both C and AC trails together; cyan/gold = backward
+     extension, blue/orange = original forward).
+   Result: LC1 +43–44 h backward (day ≈ 4.2 → 10), LC2 +71 h
+   backward (day ≈ 5 → 12). The pre-onset window cleanly shows
+   LC1 stays NW-SE (+40°) while LC2 transitions from zonal (~0°)
+   to NE-SW (−60°) at day-8 onset.
+2. **`scripts/idealized_plot.py`** — 3-panel last row, each with its
+   own colourbar: β·Φ₁; (−aₓ·Φ₂)+(−a_y·Φ₃); (−γ₁·Φ₄)+(−γ₂·Φ₅) with
+   ellipse + C/S axis arrows. α convention:
+   `α = ½·atan2(γ₁, γ₂)` ∈ (−90°, 90°]; C-axis darkorange inward at α,
+   S-axis royalblue outward at α+90°.
+
+### Earlier history
 
 **v2.7.0 changes** on top of v2.6.0:
 

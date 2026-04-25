@@ -7,6 +7,7 @@ outputs/**/raw/
 outputs/**/processed.nc
 outputs/**/pv330_anom.nc
 outputs/**/zeta250_anom.nc
+outputs/**/zeta250_anom_back.nc
 outputs/**/vor250.nc
 outputs/**/theta_pv2_anom.nc
 outputs/**/composites/**/*.nc
