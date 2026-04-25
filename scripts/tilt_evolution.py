@@ -29,6 +29,7 @@ import pvtend
 
 sys.path.insert(0, str(Path(__file__).parent))
 import _config as CFG  # noqa
+from _grad_safe import safe_gradient, mask_vmax  # noqa
 
 ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
             "thorncroft_rwb/outputs")
@@ -89,21 +90,12 @@ def _strict_mask(anom: np.ndarray, polarity: str, thr: float,
 
 
 def _fit_ellipse(mask: np.ndarray, weights: np.ndarray,
-                 X: np.ndarray, Y: np.ndarray,
-                 lat_weight_2d: np.ndarray | None = None):
-    """Weighted-covariance ellipse over masked points.
-
-    Parameters
-    ----------
-    lat_weight_2d : optional 2-D array, same shape as mask.
-        Multiplicative latitude weight applied to |weights| before fitting.
-        Typically 1/cos(lat) so near-polar pixels get heavier weight.
+                 X: np.ndarray, Y: np.ndarray):
+    """Weighted-covariance ellipse over masked points (no lat weighting).
 
     Returns (theta_deg ∈ [-90,90), a, b, xc, yc) or all NaN if too sparse.
     """
     w = np.where(mask, np.abs(weights), 0.0)
-    if lat_weight_2d is not None:
-        w = w * lat_weight_2d
     s = float(w.sum())
     if s <= 0 or mask.sum() < 8:
         return np.nan, np.nan, np.nan, np.nan, np.nan
@@ -197,14 +189,6 @@ def process(lc: str, method: str, polarity: str = "C"):
     dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
     dy_m = CFG.DX * M_PER_DEG
 
-    # Latitude weight for ellipse fit: 1/cos(lat) so pixels closer to the
-    # North Pole receive heavier weight than equatorial pixels.
-    # Latitude of each patch point ≈ CENTER_LAT + y_rel[j], clipped to ±85°
-    # to prevent 1/cos(90°) blow-up.  Normalized so mean weight = 1.
-    _lat_clipped = np.clip(CFG.CENTER_LAT + Y, -85.0, 85.0)
-    lat_weight_2d = 1.0 / np.cos(np.deg2rad(_lat_clipped))
-    lat_weight_2d /= lat_weight_2d.mean()
-
     # pv_dt centred difference of TOTAL field
     pv_dt = np.full_like(q, np.nan)
     pv_dt[1:-1] = (q[2:] - q[:-2]) / (2 * 3600.0)
@@ -228,14 +212,14 @@ def process(lc: str, method: str, polarity: str = "C"):
         if m.sum() < 8:
             continue
         mask_frames[i] = m
-        th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y, lat_weight_2d)
+        th, a_, b_, xcc, ycc = _fit_ellipse(m, qai, X, Y)
         theta_obs[i] = th; a_obs[i] = a_; b_obs[i] = b_
         xc_obs[i] = xcc; yc_obs[i] = ycc
 
         if i == 0 or i == nt - 1 or not np.isfinite(pv_dt[i]).any():
             continue
         # Build basis at i and project
-        qdy, qdx = np.gradient(qi, dy_m, dx_m, edge_order=2)
+        qdx, qdy = safe_gradient(q[i], dy_m, dx_m)
         try:
             basis = pvtend.compute_orthogonal_basis(
                 qai, qdx, qdy, x_rel, y_rel,
@@ -256,7 +240,7 @@ def process(lc: str, method: str, polarity: str = "C"):
         m2 = _strict_mask(qa_next, polarity, fit_thr, X, Y, guard_r)
         if m2.sum() < 8:
             continue
-        th2, a2, b2, xc2, yc2 = _fit_ellipse(m2, qa_next, X, Y, lat_weight_2d)
+        th2, a2, b2, xc2, yc2 = _fit_ellipse(m2, qa_next, X, Y)
         theta_pred[i] = th2; a_pred[i] = a2; b_pred[i] = b2
         xc_pred[i] = xc2; yc_pred[i] = yc2
 
@@ -335,15 +319,37 @@ def _make_animation(lc, method, polarity,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
                     fit_thr, guard_r, mask_str, dx_m, dy_m, plots):
     nt = q.shape[0]
-    # Robust colour limits
-    pct = CFG.PCTL_CBAR
-    vmax_q = float(np.nanpercentile(np.abs(q), pct))
-    vmax_qa = float(np.nanpercentile(np.abs(qa), pct))
-    vmax_dt = float(np.nanpercentile(np.abs(pv_dt[np.isfinite(pv_dt)]), pct)
-                    if np.isfinite(pv_dt).any() else 1.0)
-    vmax_def = float(np.nanpercentile(
-        np.abs(deform_field[np.isfinite(deform_field)]), pct)
-        if np.isfinite(deform_field).any() else vmax_dt)
+    # Mask-region-based vmax: per panel, take max |·| over (mask & finite)
+    # pixels across all frames.  This avoids basis edge-blow-up dominating
+    # the colour scale.  ``mask_frames`` is the central-component mask from
+    # the tilt-fit pass; pv_dt and deform live on the same patch so the
+    # same mask is appropriate.
+    mf = mask_frames  # (nt, ny, nx)
+    if mf.any():
+        sel_q   = mf & np.isfinite(q)
+        sel_qa  = mf & np.isfinite(qa)
+        sel_dt  = mf & np.isfinite(pv_dt)
+        sel_def = mf & np.isfinite(deform_field)
+        vmax_q   = float(np.abs(q[sel_q]).max())   if sel_q.any()   else 1.0
+        vmax_qa  = float(np.abs(qa[sel_qa]).max())  if sel_qa.any()  else 1.0
+        vmax_dt  = float(np.abs(pv_dt[sel_dt]).max()) if sel_dt.any() else 1.0
+        vmax_def = float(np.abs(deform_field[sel_def]).max()) \
+                   if sel_def.any() else vmax_dt
+    else:
+        # fallback: percentile if no mask was ever populated
+        pct = CFG.PCTL_CBAR
+        vmax_q   = float(np.nanpercentile(np.abs(q), pct))
+        vmax_qa  = float(np.nanpercentile(np.abs(qa), pct))
+        vmax_dt  = float(np.nanpercentile(
+            np.abs(pv_dt[np.isfinite(pv_dt)]), pct)
+            if np.isfinite(pv_dt).any() else 1.0)
+        vmax_def = float(np.nanpercentile(
+            np.abs(deform_field[np.isfinite(deform_field)]), pct)
+            if np.isfinite(deform_field).any() else vmax_dt)
+    for nm, v in (("q", vmax_q), ("qa", vmax_qa),
+                  ("dt", vmax_dt), ("def", vmax_def)):
+        if v <= 0 or not np.isfinite(v):
+            print(f"  [{lc}:{method}:{polarity}] vmax_{nm} fallback to 1.0")
 
     fig, axes = plt.subplots(2, 2, figsize=(12.5, 10), constrained_layout=True)
     (ax_ul, ax_ur), (ax_ll, ax_lr) = axes

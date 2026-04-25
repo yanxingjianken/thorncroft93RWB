@@ -24,11 +24,11 @@ JUMP_MAX_DEG_PER_H = 7.0
 TOP_N = 6
 
 # --- Per-LC composite window (hours since 2000-01-01 00 UTC) ---
-# LC1 day 6..10 (hours 144..240), LC2 day 7..11 (hours 168..264).
+# LC1 day 6..10 (hours 144..240), LC2 day 8..12 (hours 192..288).
 # Each window covers 96 h => N_COMPOSITE_HOURS = 97 frames.
 WINDOW_BY_LC = {
     "lc1": (6 * 24, 10 * 24),
-    "lc2": (7 * 24, 11 * 24),
+    "lc2": (8 * 24, 12 * 24),
 }
 # Backward-compatible defaults (used when no LC tag is available; equal LC1).
 WINDOW_START_HOUR = WINDOW_BY_LC["lc1"][0]

@@ -143,7 +143,7 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.4.0 — zeta250 canonical + lat-weighted ellipse)
+## Workflow (v2.6.0 — edge-safe gradients, mask-based cbar, idealized 3-row figure)
 
 From v2.4.0 onwards the pipeline uses **zeta250 as the sole canonical
 tracking method**. The `pv330` and `theta_pv2` pipelines remain in the
@@ -152,30 +152,40 @@ default scripts, CLI flags, and outputs target `zeta250` only.  Their
 previously-committed outputs have been moved to `outputs/archive/`
 (on disk, not tracked by git).
 
-**v2.4.0 changes** on top of v2.3.1 / blank-frame fix:
+**v2.6.0 changes** on top of v2.5.0:
 
-1. **Latitude-weighted ellipse fit** — `scripts/tilt_evolution.py::_fit_ellipse`
-   now accepts an optional `lat_weight_2d` array and multiplies each
-   pixel's weight by $1/\cos(\phi)$ where
-   $\phi = \text{CENTER\_LAT} + y_\text{rel}$ (clipped to ±85°,
-   normalised so mean weight = 1). Pixels nearer the North Pole receive
-   heavier weight; tropical pixels receive lighter weight. Both the
-   observed-ellipse and the 1-h-prediction-ellipse calls now use this
-   weight.
-2. **`CANONICAL_METHOD = "zeta250"`** added to `scripts/_config.py`; all
-   script CLI defaults now point to this constant instead of looping
-   over all three methods.
-3. **`make_figures.py` blank-frame fix** — replaced `ax.clear()` with
-   `cf_container[0].remove()` (same fix applied earlier to
-   `make_tracked_anim.py`). The static cartopy coastlines/gridlines stay
-   persistent; only the contourf layer is swapped each frame.
-4. **Archive** — pv330 and theta_pv2 tracks, composites, projections, and
-   tracked-mp4s moved to `outputs/archive/` (`.gitignore`d); only
-   `zeta250_tracked.mp4` remains committed.
+1. **Lat-weighting removed** from `_fit_ellipse`. The fit is now a
+   plain |q'|-weighted covariance ellipse over the central-blob mask;
+   no `1/cos(φ)` factor.
+2. **Edge-safe gradient** — new `scripts/_grad_safe.py::safe_gradient`
+   replaces `np.gradient` everywhere a basis is built. Cells whose
+   central-difference (or 2nd-order one-sided rim) stencil touches a
+   NaN return 0 instead of fabricating a step. This kills the
+   patch-boundary blow-up that previously dominated `Φ₄=q_xy`,
+   `Φ₅=q_xx-q_yy`, and the residual.
+3. **Mask-based colour bar** — new `scripts/_grad_safe.py::mask_vmax`
+   sets `±max(|F|)` of the central-blob mask region for `decomp_*`,
+   `decomp_bases_*` and the 4-panel tilt animation, so the colour
+   range tracks the physically meaningful interior, not the rim
+   artefacts.
+4. **LC2 window restored** to **day 8 → 12** (was 7 → 11 in v2.5.0).
+5. **New idealized 3-row figure** — `scripts/idealized_plot.py`
+   produces, per LC, a 3×5 panel saved to
+   `outputs/<lc>/projections/zeta250/idealized_plot/`:
+     * Row 1 — `∂q/∂t`, recon, residual sharing one mask-based cbar,
+       with central-blob mask + fitted ellipse + major-axis overlay.
+     * Row 2 — Φ₁..Φ₅ (post smoothing & Gram-Schmidt).
+     * Row 3 — scaled bases (β·Φ₁, −aₓ·Φ₂, −a_y·Φ₃, −γ₁·Φ₄, −γ₂·Φ₅)
+       with numeric coefficients and stretching angle
+       α = 90°−½·atan2(γ₂,γ₁); deformation panels carry outward
+       stretching arrows along α and inward compressing arrows along
+       α+90°.
+   The script also drops a copy of itself into the output folder for
+   provenance.
 
 **Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
 - `lc1` → day **6 → 10** (hours 144..240)
-- `lc2` → day **7 → 11** (hours 168..264)
+- `lc2` → day **8 → 12** (hours 192..288)
 
 Each window covers 96 h → **97 hourly composite frames**.
 
@@ -186,8 +196,9 @@ graph TD
     C --> D[scripts/postprocess.py]
     D --> E[outputs/&lt;lc&gt;/processed.nc]
 
-    CFG[scripts/_config.py<br/>CANONICAL_METHOD=zeta250,<br/>METHOD dict, WINDOW_BY_LC,<br/>lat_weight 1/cos lat] -.-> H
-    CFG -.-> J & L & EXP & N & P & R & W & FIG
+    CFG[scripts/_config.py<br/>CANONICAL_METHOD=zeta250,<br/>METHOD dict, WINDOW_BY_LC] -.-> H
+    GS[scripts/_grad_safe.py<br/>safe_gradient + mask_vmax] -.-> P & R & ID
+    CFG -.-> J & L & EXP & N & P & R & W & FIG & ID
 
     E --> H[scripts/prep_track_inputs.py<br/>build zeta250_anom.nc]
     H --> I2[zeta250_anom.nc]
@@ -199,11 +210,13 @@ graph TD
     EXP --> CSV[tracks/zeta250/track_centers_&#123;C,AC&#125;.csv]
     CSV --> N[scripts/build_composites.py<br/>track-centred 81&times;81 patch &plusmn;40&deg;,<br/>total + anom]
     N --> O[composites/zeta250/&#123;C,AC&#125;_composite.nc]
-    O --> P[scripts/project_composite.py<br/>5-basis decomp anchored at first<br/>valid hour]
+    O --> P[scripts/project_composite.py<br/>5-basis decomp anchored at first<br/>valid hour, mask-based cbar]
     P --> Q[projections/zeta250/plots/decomp_*.png]
-    O --> R[scripts/tilt_evolution.py<br/>center-blob mask + lat-weighted ellipse,<br/>1/cos lat pixel weight]
+    O --> R[scripts/tilt_evolution.py<br/>center-blob mask + |q'|-weighted ellipse,<br/>safe_gradient + mask_vmax cbar]
     R --> S[projections/zeta250/plots/<br/>theta_tilt_*.png, tilt_animation_*.mp4]
     R --> SD[projections/zeta250/data/tilt_&#123;C,AC&#125;.npz]
+    O --> ID[scripts/idealized_plot.py<br/>3-row idealised figure<br/>row1 dq/dt+recon+resid,<br/>row2 &Phi;&#8321;..&Phi;&#8325;, row3 scaled bases<br/>+ &alpha; stretching arrows]
+    ID --> IDP[projections/zeta250/idealized_plot/<br/>&lt;lc&gt;_idealized_3row_&#123;C,AC&#125;.png]
     O --> W[plotting/make_tracked_anim.py<br/>zeta250 default]
     W --> WPMP[outputs/&lt;lc&gt;/plots/zeta250_tracked.mp4]
     E --> FIG[plotting/make_figures.py<br/>cf.remove fix, no ax.clear]

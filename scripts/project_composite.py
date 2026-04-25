@@ -20,6 +20,7 @@ import pvtend
 
 sys.path.insert(0, str(Path(__file__).parent))
 import _config as CFG  # noqa
+from _grad_safe import safe_gradient, mask_vmax  # noqa
 
 ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
             "thorncroft_rwb/outputs")
@@ -74,7 +75,7 @@ def process(lc: str, method: str, polarity: str = "C"):
 
     dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
     dy_m = CFG.DX * M_PER_DEG
-    qdy_anchor, qdx_anchor = np.gradient(q_anchor, dy_m, dx_m, edge_order=2)
+    qdx_anchor, qdy_anchor = safe_gradient(q[i0], dy_m, dx_m)
 
     basis = pvtend.compute_orthogonal_basis(
         qa_anchor, qdx_anchor, qdy_anchor, x_rel, y_rel,
@@ -89,12 +90,39 @@ def process(lc: str, method: str, polarity: str = "C"):
     total = pv_dt_anchor
     recon = proj["recon"]; resid = proj["resid"]
     integ = proj["int"]; prop = proj["prop"]; deform = proj["def"]
-    r1 = float(np.nanmax(np.abs([total, recon, resid])))
-    r2 = float(np.nanmax(np.abs([integ, prop, deform])))
+
+    # Build the central-component mask first; cbar limits are computed
+    # inside the mask region only so basis edge artefacts (np.gradient
+    # one-sided stencils on the patch rim) do not dominate the colour
+    # range.
+    from scipy import ndimage as ndi
+    fit_thr = float(CFG.METHOD[method]["mask_thresh"])
+    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
+    X, Y = np.meshgrid(x_rel, y_rel)
+    if polarity == "C":
+        raw_m = qa_anchor > fit_thr
+    else:
+        raw_m = qa_anchor < -fit_thr
+    raw_m &= (np.sqrt(X * X + Y * Y) <= guard_r)
+    if raw_m.any():
+        labs, nlab = ndi.label(raw_m)
+        if nlab > 1:
+            iy0 = int(np.argmin(np.abs(y_rel)))
+            ix0 = int(np.argmin(np.abs(x_rel)))
+            centre_lbl = labs[iy0, ix0]
+            if centre_lbl == 0:
+                cs = ndi.center_of_mass(raw_m, labs, range(1, nlab + 1))
+                ds_ = [np.hypot(cy - iy0, cx - ix0) for cy, cx in cs]
+                centre_lbl = int(np.argmin(ds_)) + 1
+            raw_m = labs == centre_lbl
+
+    r1 = max(mask_vmax(total, raw_m), mask_vmax(recon, raw_m),
+             mask_vmax(resid, raw_m))
+    r2 = max(mask_vmax(integ, raw_m), mask_vmax(prop, raw_m),
+             mask_vmax(deform, raw_m))
 
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 8),
                              constrained_layout=True)
-    X, Y = np.meshgrid(x_rel, y_rel)
 
     def _panel(ax, F, vmax, title):
         im = ax.pcolormesh(X, Y, F, cmap="RdBu_r",
@@ -106,27 +134,7 @@ def process(lc: str, method: str, polarity: str = "C"):
         return im
 
     im1 = _panel(axes[0, 0], total, r1, r"$\partial q/\partial t$")
-    # overlay the central-component ellipse mask (connected component
-    # containing, or closest to, the patch origin).
-    from scipy import ndimage as ndi
-    fit_thr = float(CFG.METHOD[method]["mask_thresh"])
-    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
-    if polarity == "C":
-        raw_m = qa_anchor > fit_thr
-    else:
-        raw_m = qa_anchor < -fit_thr
-    raw_m &= (np.sqrt(X * X + Y * Y) <= guard_r)
-    if raw_m.any():
-        labs, nlab = ndi.label(raw_m)
-        if nlab > 1:
-            iy0 = int(np.argmin(np.abs(Y[:, 0])))
-            ix0 = int(np.argmin(np.abs(X[0, :])))
-            centre_lbl = labs[iy0, ix0]
-            if centre_lbl == 0:
-                cs = ndi.center_of_mass(raw_m, labs, range(1, nlab + 1))
-                ds_ = [np.hypot(cy - iy0, cx - ix0) for cy, cx in cs]
-                centre_lbl = int(np.argmin(ds_)) + 1
-            raw_m = labs == centre_lbl
+    # overlay the central-component ellipse mask.
     axes[0, 0].contour(X, Y, raw_m.astype(float), levels=[0.5],
                        colors="k", linewidths=1.2, linestyles="--")
     _panel(axes[0, 1], recon, r1, "reconstruction")
@@ -156,7 +164,7 @@ def process(lc: str, method: str, polarity: str = "C"):
             basis.phi_def, basis.phi_strain]
     labels = [r"$\phi_1$ int", r"$\phi_2$ prop$_x$", r"$\phi_3$ prop$_y$",
               r"$\phi_4$ def shear", r"$\phi_5$ def strain"]
-    rb = max(np.nanmax(np.abs(p)) for p in phis)
+    rb = max(mask_vmax(p, raw_m) for p in phis)
     fig, axs = plt.subplots(1, 5, figsize=(18, 4.2),
                             constrained_layout=True)
     last = None
