@@ -143,7 +143,7 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.6.0 — edge-safe gradients, mask-based cbar, idealized 3-row figure)
+## Workflow (v2.7.0 — asymmetric patch ±30° lat × ±40° lon)
 
 From v2.4.0 onwards the pipeline uses **zeta250 as the sole canonical
 tracking method**. The `pv330` and `theta_pv2` pipelines remain in the
@@ -152,36 +152,16 @@ default scripts, CLI flags, and outputs target `zeta250` only.  Their
 previously-committed outputs have been moved to `outputs/archive/`
 (on disk, not tracked by git).
 
-**v2.6.0 changes** on top of v2.5.0:
+**v2.7.0 changes** on top of v2.6.0:
 
-1. **Lat-weighting removed** from `_fit_ellipse`. The fit is now a
-   plain |q'|-weighted covariance ellipse over the central-blob mask;
-   no `1/cos(φ)` factor.
-2. **Edge-safe gradient** — new `scripts/_grad_safe.py::safe_gradient`
-   replaces `np.gradient` everywhere a basis is built. Cells whose
-   central-difference (or 2nd-order one-sided rim) stencil touches a
-   NaN return 0 instead of fabricating a step. This kills the
-   patch-boundary blow-up that previously dominated `Φ₄=q_xy`,
-   `Φ₅=q_xx-q_yy`, and the residual.
-3. **Mask-based colour bar** — new `scripts/_grad_safe.py::mask_vmax`
-   sets `±max(|F|)` of the central-blob mask region for `decomp_*`,
-   `decomp_bases_*` and the 4-panel tilt animation, so the colour
-   range tracks the physically meaningful interior, not the rim
-   artefacts.
-4. **LC2 window restored** to **day 8 → 12** (was 7 → 11 in v2.5.0).
-5. **New idealized 3-row figure** — `scripts/idealized_plot.py`
-   produces, per LC, a 3×5 panel saved to
-   `outputs/<lc>/projections/zeta250/idealized_plot/`:
-     * Row 1 — `∂q/∂t`, recon, residual sharing one mask-based cbar,
-       with central-blob mask + fitted ellipse + major-axis overlay.
-     * Row 2 — Φ₁..Φ₅ (post smoothing & Gram-Schmidt).
-     * Row 3 — scaled bases (β·Φ₁, −aₓ·Φ₂, −a_y·Φ₃, −γ₁·Φ₄, −γ₂·Φ₅)
-       with numeric coefficients and stretching angle
-       α = 90°−½·atan2(γ₂,γ₁); deformation panels carry outward
-       stretching arrows along α and inward compressing arrows along
-       α+90°.
-   The script also drops a copy of itself into the output folder for
-   provenance.
+1. **Asymmetric Lagrangian patch** — `PATCH_HALF_LON=40°`, `PATCH_HALF_LAT=30°`.
+   Composites are now **61 rows × 81 cols** (lat × lon) instead of
+   the previous 81×81 square.  The guard-circle radius is bounded by
+   the shorter (latitude) half-width: `PATCH_HALF = PATCH_HALF_LAT = 30°`.
+   - `build_composites.py` uses `x_rel = ±PATCH_HALF_LON`, `y_rel = ±PATCH_HALF_LAT`.
+   - All plot axes use `xlim(±40°)`, `ylim(±30°)` accordingly.
+   - Guard circle: `PATCH_HALF_LAT − GUARD_PAD_DEG = 25°` (unchanged physics).
+2. `outputs/archive/` contents cleared (old 81×81 results removed).
 
 **Per-LC composite window (`scripts/_config.py:WINDOW_BY_LC`)**:
 - `lc1` → day **6 → 10** (hours 144..240)

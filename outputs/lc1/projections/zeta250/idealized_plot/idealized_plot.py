@@ -72,8 +72,8 @@ def _panel(ax, X, Y, F, vmax, title, cmap="RdBu_r"):
                        shading="auto")
     ax.set_aspect("equal")
     ax.set_title(title, fontsize=10)
-    ax.set_xlim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
-    ax.set_ylim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
+    ax.set_xlim(-CFG.PATCH_HALF_LON, CFG.PATCH_HALF_LON)
+    ax.set_ylim(-CFG.PATCH_HALF_LAT, CFG.PATCH_HALF_LAT)
     ax.axhline(0, color="k", lw=0.3, alpha=0.4)
     ax.axvline(0, color="k", lw=0.3, alpha=0.4)
     return im
@@ -138,7 +138,7 @@ def process(lc: str, polarity: str = "C"):
 
     # central-component mask
     fit_thr = float(CFG.METHOD[method]["mask_thresh"])
-    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
+    guard_r = float(CFG.PATCH_HALF_LAT - CFG.GUARD_PAD_DEG)
     raw_m = _strict_mask(qa_k, polarity, fit_thr, X, Y, guard_r)
 
     # ellipse fit (on |qa| weighted, no lat weighting)

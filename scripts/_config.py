@@ -8,8 +8,9 @@ Per-method DetectNodes thresholds + closed-contour deltas live in
 from __future__ import annotations
 
 # --- Lagrangian patch geometry ---
-PATCH_HALF = 40        # degrees; half-width in x/y (±40°) — wider so even
-                       # elongated late-stage anomalies fit without truncation
+PATCH_HALF_LON = 40    # degrees; half-width in longitude (±40°)
+PATCH_HALF_LAT = 30    # degrees; half-width in latitude  (±30°)
+PATCH_HALF = PATCH_HALF_LAT  # alias used for guard-circle radius (smaller dim)
 DX = 1.0               # degrees; grid spacing
 CENTER_LAT = 50.0      # approximate reference lat (for dx metric only)
 LAT_MIN = 25.0         # degrees N; DetectNodes search domain (30-70 N + 5° slack)

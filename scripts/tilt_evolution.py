@@ -184,7 +184,7 @@ def process(lc: str, method: str, polarity: str = "C"):
 
     nt = q.shape[0]
     fit_thr = float(spec["mask_thresh"])
-    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
+    guard_r = float(CFG.PATCH_HALF_LAT - CFG.GUARD_PAD_DEG)
     mask_str = "> 0" if polarity == "C" else "< 0"
     dx_m = CFG.DX * M_PER_DEG * np.cos(np.deg2rad(CFG.CENTER_LAT))
     dy_m = CFG.DX * M_PER_DEG
@@ -413,8 +413,8 @@ def _make_animation(lc, method, polarity,
         # ellipse + major axis on every panel
         for ax in axes.flat:
             ax.set_aspect("equal")
-            ax.set_xlim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
-            ax.set_ylim(-CFG.PATCH_HALF, CFG.PATCH_HALF)
+            ax.set_xlim(-CFG.PATCH_HALF_LON, CFG.PATCH_HALF_LON)
+            ax.set_ylim(-CFG.PATCH_HALF_LAT, CFG.PATCH_HALF_LAT)
             ax.axhline(0, color="k", lw=0.3, alpha=0.4)
             ax.axvline(0, color="k", lw=0.3, alpha=0.4)
             # guard circle

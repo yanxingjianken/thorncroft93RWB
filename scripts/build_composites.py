@@ -5,7 +5,7 @@ For the chosen ``method``, the composite carries:
   anom        : the method's anomaly       (e.g. pv_anom_330, zeta_anom_250,
                                               theta_anom_pv2)
 
-A patch of (2*PATCH_HALF+1)×(2*PATCH_HALF+1) at DX° spacing follows the
+A patch of (2*PATCH_HALF_LAT+1) rows × (2*PATCH_HALF_LON+1) cols at DX° spacing follows the
 tracked centre (lon, lat) at every hour the track exists.
 
 Reads:  outputs/<lc>/tracks/<method>/track_centers_{C,AC}.csv
@@ -85,8 +85,8 @@ def build(lc: str, method: str, polarity: str = "C"):
     csv = pd.read_csv(csv_path, parse_dates=["time_iso"])
     win_start = _win_start(lc)
 
-    x_rel = np.arange(-CFG.PATCH_HALF, CFG.PATCH_HALF + CFG.DX / 2, CFG.DX)
-    y_rel = np.arange(-CFG.PATCH_HALF, CFG.PATCH_HALF + CFG.DX / 2, CFG.DX)
+    x_rel = np.arange(-CFG.PATCH_HALF_LON, CFG.PATCH_HALF_LON + CFG.DX / 2, CFG.DX)
+    y_rel = np.arange(-CFG.PATCH_HALF_LAT, CFG.PATCH_HALF_LAT + CFG.DX / 2, CFG.DX)
     nx, ny = len(x_rel), len(y_rel)
 
     n_members = CFG.TOP_N
@@ -168,7 +168,8 @@ def build(lc: str, method: str, polarity: str = "C"):
             "total_var": spec["total_var"],
             "anom_var": spec["var"],
             "units": spec["units"],
-            "patch_half_deg": float(CFG.PATCH_HALF),
+            "patch_half_lon_deg": float(CFG.PATCH_HALF_LON),
+            "patch_half_lat_deg": float(CFG.PATCH_HALF_LAT),
             "dx_deg": float(CFG.DX),
             "frame": ("track-centred Lagrangian patch: x = lon - "
                       "lon_track, y = lat - lat_track"),

@@ -97,7 +97,7 @@ def process(lc: str, method: str, polarity: str = "C"):
     # range.
     from scipy import ndimage as ndi
     fit_thr = float(CFG.METHOD[method]["mask_thresh"])
-    guard_r = float(CFG.PATCH_HALF - CFG.GUARD_PAD_DEG)
+    guard_r = float(CFG.PATCH_HALF_LAT - CFG.GUARD_PAD_DEG)
     X, Y = np.meshgrid(x_rel, y_rel)
     if polarity == "C":
         raw_m = qa_anchor > fit_thr
