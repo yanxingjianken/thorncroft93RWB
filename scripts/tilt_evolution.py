@@ -304,10 +304,21 @@ def process(lc: str, method: str, polarity: str = "C",
                                                       theta_obs[i-1])
         else:
             dth_pred[i] = dth_pred[i-1]
+    # If the user asked to start the plot at a specific absolute hour,
+    # rebase the accumulators so both curves are zero at the first
+    # displayed frame (otherwise drift accumulated during the hidden
+    # warm-up portion appears as a spurious offset at the left edge).
+    dth_obs_disp = dth_obs.copy()
+    dth_pred_disp = dth_pred.copy()
+    if start_hour_abs is not None:
+        idx_start = int(np.searchsorted(t_abs, float(start_hour_abs)))
+        if 0 <= idx_start < nt:
+            dth_obs_disp -= dth_obs[idx_start]
+            dth_pred_disp -= dth_pred[idx_start]
 
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(t_abs, dth_obs, "g-", lw=2, label="∑Δθ obs")
-    ax.plot(t_abs, dth_pred, "c--", lw=1.5, label="∑Δθ pred")
+    ax.plot(t_abs, dth_obs_disp, "g-", lw=2, label="∑Δθ obs")
+    ax.plot(t_abs, dth_pred_disp, "c--", lw=1.5, label="∑Δθ pred")
     ax.set_xlabel("simulation hour")
     ax.set_ylabel("accumulated tilt change [deg]")
     ax.set_title(f"{lc.upper()} {method}/{polarity}  accumulated tilt")
