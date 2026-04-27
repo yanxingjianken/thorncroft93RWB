@@ -12,7 +12,7 @@ set -euo pipefail
 
 LC=${1:?lc1 or lc2}
 METHOD=${2:?pv330|zeta250|theta_pv2}
-ROOT=/net/flood/data2/users/x_yan/barotropic_vorticity_model/thorncroft_rwb
+ROOT=/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/thorncroft_rwb
 TE_BIN=/net/flood/home/x_yan/tempestextremes/build/bin
 
 # Pull per-method config from _config.py (single source of truth).

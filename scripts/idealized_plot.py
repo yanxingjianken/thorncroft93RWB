@@ -40,7 +40,7 @@ import _config as CFG  # noqa
 from _grad_safe import safe_gradient, mask_vmax  # noqa
 from tilt_evolution import _strict_mask, _fit_ellipse, _ellipse_axis_endpoints  # noqa
 
-ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
+ROOT = Path("/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/"
             "thorncroft_rwb/outputs")
 M_PER_DEG = 111_000.0
 
@@ -78,7 +78,10 @@ def _draw_axis_arrows(ax, xc, yc, alpha_deg, arrow_len):
 def _panel(ax, X, Y, F, vmax, title, cmap="RdBu_r"):
     im = ax.pcolormesh(X, Y, F, cmap=cmap, vmin=-vmax, vmax=vmax,
                        shading="auto")
-    ax.set_aspect("equal")
+    # NOTE: aspect is left as "auto" (default) so each panel fills its
+    # gridspec slot. This keeps every row at the same horizontal extent
+    # regardless of how many panels it contains. The slight x:y stretch
+    # (40°×30° → 4:3 vs displayed) is acceptable for schematic figures.
     ax.set_title(title, fontsize=10)
     ax.set_xlim(-CFG.PATCH_HALF_LON, CFG.PATCH_HALF_LON)
     ax.set_ylim(-CFG.PATCH_HALF_LAT, CFG.PATCH_HALF_LAT)
@@ -156,34 +159,47 @@ def process(lc: str, polarity: str = "C",
     # ellipse fit (on |qa| weighted, no lat weighting)
     theta_e, a_e, b_e, xc, yc = _fit_ellipse(raw_m, qa_k, X, Y)
 
-    # ---- figure: rows 0,1 = 5 panels; row 2 = 3 wider panels ----------
+    # ---- figure: 3 rows, each with its own gridspec spanning the full
+    # width [left=0.04 .. right=0.98] so the left/right extents align.
+    # Row 0: 3 panels (∂q/∂t, recon, resid) — each panel has its own
+    #        attached cbar via make_axes_locatable, with a SHARED range r1.
+    # Row 1: 5 panels (Φ₁..Φ₅) — each panel has its own cbar with a
+    #        SHARED range rb.
+    # Row 2: 3 panels (β·Φ₁, advection sum, deformation sum) — each
+    #        panel has its own cbar with INDEPENDENT range.
     from matplotlib import gridspec
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
     fig = plt.figure(figsize=(17, 11))
-    outer = gridspec.GridSpec(3, 1, figure=fig, hspace=0.45,
-                              top=0.92, bottom=0.04, left=0.04, right=0.98)
+    outer = gridspec.GridSpec(3, 1, figure=fig, hspace=0.55,
+                              top=0.92, bottom=0.05, left=0.04, right=0.96)
     inner_r0 = gridspec.GridSpecFromSubplotSpec(
-        1, 5, subplot_spec=outer[0], wspace=0.28)
+        1, 3, subplot_spec=outer[0], wspace=0.55)
     inner_r1 = gridspec.GridSpecFromSubplotSpec(
-        1, 5, subplot_spec=outer[1], wspace=0.28)
+        1, 5, subplot_spec=outer[1], wspace=0.55)
     inner_r2 = gridspec.GridSpecFromSubplotSpec(
-        1, 3, subplot_spec=outer[2], wspace=0.40)
-    axes_r0 = [fig.add_subplot(inner_r0[0, j]) for j in range(5)]
+        1, 3, subplot_spec=outer[2], wspace=0.55)
+    axes_r0 = [fig.add_subplot(inner_r0[0, j]) for j in range(3)]
     axes_r1 = [fig.add_subplot(inner_r1[0, j]) for j in range(5)]
     axes_r2 = [fig.add_subplot(inner_r2[0, j]) for j in range(3)]
 
-    # row 0 — pv_dt / recon / resid + shared cbar
+    def _attach_cbar(ax, im, label):
+        div = make_axes_locatable(ax)
+        cax = div.append_axes("right", size="5%", pad=0.08)
+        cb = fig.colorbar(im, cax=cax)
+        cb.set_label(label, fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+        return cb
+
+    # row 0 — pv_dt / recon / resid (shared range r1)
     r1 = max(mask_vmax(pv_dt, raw_m),
              mask_vmax(recon, raw_m),
              mask_vmax(resid, raw_m))
-    fields_r0  = [pv_dt, recon, resid, None, None]
-    titles_r0  = [r"$\partial q/\partial t$", "reconstruction",
-                  "residual", "", ""]
-    im0 = None
-    for j, (F, title_) in enumerate(zip(fields_r0, titles_r0)):
+    fields_r0 = [(pv_dt, r"$\partial q/\partial t$"),
+                 (recon, "reconstruction"),
+                 (resid, "residual")]
+    cbar_lbl_r0 = r"$\partial q/\partial t$ [s$^{-2}$]"
+    for j, (F, title_) in enumerate(fields_r0):
         ax = axes_r0[j]
-        if F is None:
-            ax.set_visible(False)
-            continue
         im0 = _panel(ax, X, Y, F, r1, title_)
         ax.contour(X, Y, raw_m.astype(float), levels=[0.5],
                    colors="k", linewidths=1.0, linestyles="--")
@@ -193,24 +209,20 @@ def process(lc: str, polarity: str = "C",
             ax.add_patch(e)
             xs, ys = _ellipse_axis_endpoints(xc, yc, a_e, theta_e)
             ax.plot(xs, ys, "g-", lw=1.4)
-    if im0 is not None:
-        fig.colorbar(im0, ax=axes_r0[:3], shrink=0.8,
-                     label=r"$\partial q/\partial t$ [s$^{-2}$]")
+        _attach_cbar(ax, im0, cbar_lbl_r0)
 
-    # row 1 — orthogonal bases Φ₁..Φ₅ + shared cbar
+    # row 1 — orthogonal bases Φ₁..Φ₅ (shared range rb)
     phis = [basis.phi_int, basis.phi_dx, basis.phi_dy,
             basis.phi_def, basis.phi_strain]
     phi_lbls = [r"$\Phi_1$ (intensify)", r"$\Phi_2$ (prop$_x$)",
                 r"$\Phi_3$ (prop$_y$)", r"$\Phi_4$ (def $q_{xy}$)",
                 r"$\Phi_5$ (def $q_{xx}\!-\!q_{yy}$)"]
     rb = max(mask_vmax(p, raw_m) for p in phis)
-    im_b = None
     for j, (P, lab) in enumerate(zip(phis, phi_lbls)):
         im_b = _panel(axes_r1[j], X, Y, P, rb, lab)
-    if im_b is not None:
-        fig.colorbar(im_b, ax=axes_r1, shrink=0.8, label="basis")
+        _attach_cbar(axes_r1[j], im_b, "basis")
 
-    # row 2 — 3 combined panels, each with its own colour bar
+    # row 2 — 3 combined panels, each with its own (independent) cbar
     #   [0] β·Φ₁                             intensification
     #   [1] (−aₓ·Φ₂) + (−a_y·Φ₃)           advection sum
     #   [2] (−γ₁·Φ₄) + (−γ₂·Φ₅)           deformation sum + C/S arrows
@@ -218,12 +230,12 @@ def process(lc: str, polarity: str = "C",
     F_intens = beta    * basis.phi_int
     F_adv    = (-ax_raw * basis.phi_dx) + (-ay_raw * basis.phi_dy)
     F_def    = (-g1_raw * basis.phi_def) + (-g2_raw * basis.phi_strain)
-    lbl_intens = rf"$\beta\,\Phi_1$  ($\beta={beta:+.2e}$)"
-    lbl_adv    = (rf"$(-a_x\Phi_2)+(-a_y\Phi_3)$"
-                  rf"  $a_x\!=\!{ax_:+.2e},\;a_y\!=\!{ay_:+.2e}$")
-    lbl_def    = (rf"$(-\gamma_1\Phi_4)+(-\gamma_2\Phi_5)$"
-                  rf"  $\gamma_1\!=\!{g1:+.2e},\;\gamma_2\!=\!{g2:+.2e}$"
-                  rf"  $\alpha\!=\!{alpha_deg:+.1f}^\circ$")
+    lbl_intens = rf"$\beta\,\Phi_1$\n$\beta={beta:+.2e}$".replace("\\n", "\n")
+    lbl_adv    = (rf"$(-a_x\Phi_2)+(-a_y\Phi_3)$" + "\n"
+                  rf"$a_x\!=\!{ax_:+.2e},\;a_y\!=\!{ay_:+.2e}$")
+    lbl_def    = (rf"$(-\gamma_1\Phi_4)+(-\gamma_2\Phi_5)$" + "\n"
+                  rf"$\gamma_1\!=\!{g1:+.2e},\;\gamma_2\!=\!{g2:+.2e},\;"
+                  rf"\alpha\!=\!{alpha_deg:+.1f}^\circ$")
     arrow_len = 0.8 * (a_e if np.isfinite(a_e) else 10.0)
     for j, (F, lab) in enumerate([(F_intens, lbl_intens),
                                    (F_adv,    lbl_adv),
@@ -231,8 +243,7 @@ def process(lc: str, polarity: str = "C",
         ax2 = axes_r2[j]
         vj = mask_vmax(F, raw_m)
         im2 = _panel(ax2, X, Y, F, vj, lab)
-        fig.colorbar(im2, ax=ax2, shrink=0.85, fraction=0.046, pad=0.04,
-                     label="scaled basis")
+        _attach_cbar(ax2, im2, "scaled basis")
         ax2.contour(X, Y, raw_m.astype(float), levels=[0.5],
                     colors="k", linewidths=0.8, linestyles="--")
         if np.isfinite(theta_e):

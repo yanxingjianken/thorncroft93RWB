@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _config as CFG
 from _config import THETA_LEVEL, PRESSURE_LEVEL_ZETA
 
-ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
+ROOT = Path("/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/"
             "thorncroft_rwb")
 
 

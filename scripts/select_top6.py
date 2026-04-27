@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from track_utils import parse_stitchnodes  # noqa
 import _config as CFG  # noqa
 
-ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
+ROOT = Path("/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/"
             "thorncroft_rwb/outputs")
 
 SPAN_REQ_H = CFG.SPAN_REQ_H

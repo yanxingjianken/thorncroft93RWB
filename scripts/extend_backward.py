@@ -69,7 +69,7 @@ from track_utils import parse_stitchnodes  # noqa: E402
 import idealized_plot as IDEAL  # noqa: E402
 
 # ---------------------------------------------------------------------------
-ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
+ROOT = Path("/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/"
             "thorncroft_rwb")
 M_PER_DEG = 111_000.0
 METHOD = "zeta250"

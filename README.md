@@ -66,7 +66,8 @@ the shortest retained scale, n = 95", Thorncroft 1993 §3).
 This is a **baroclinic** model (vertically stratified Tᵥ and u(σ,φ),
 baroclinic instability is the growth mechanism). The **barotropic**
 Rossby-wave equation (one vertical level, 2-D) is not used here; it
-appears in a sibling repo `../barotropic_vorticity_model`.
+appears in the sibling project at
+`../../vallis04_barotropic/speedy_weather/`.
 
 ### Vertical discretisation
 
@@ -142,6 +143,34 @@ Quick recipes:
   gives ~8-d exponential-growth phase visible before any wrap-up.
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
+
+## Workflow (v2.10.0 — repo relocation + idealized 3-row layout redesign)
+
+**v2.10.0 changes** on top of v2.9.0:
+
+1. **Repository relocation**. The project moved from
+   `…/barotropic_vorticity_model/thorncroft_rwb` to
+   `…/literature_review/rwb/thorncroft93_baroclinic/thorncroft_rwb`.
+   The sibling SpeedyWeather barotropic project moved to
+   `…/literature_review/rwb/vallis04_barotropic/speedy_weather` (its
+   SpeedyWeather.jl source clone now lives at
+   `/net/flood/data/users/x_yan/SpeedyWeather.jl` and is symlinked
+   in). All hard-coded `ROOT` paths in the python scripts and
+   `scripts/run_tempest.sh` were updated. Old absolute paths inside
+   `outputs/**/{run.log,parameters.txt,*.log}` were left as-is
+   (immutable historical artefacts).
+2. **Idealized 3-row plot layout** (`scripts/idealized_plot.py`):
+   - All three rows now span the **same horizontal extent**
+     (`left=0.04, right=0.96`).
+   - **Every panel** has its own attached colour bar via
+     `mpl_toolkits.axes_grid1.make_axes_locatable`. Row 0 panels
+     share the `∂q/∂t` range `r1`; row 1 panels share the basis
+     range `rb`; row 2 panels each have an independent range.
+   - Removed `set_aspect("equal")` so panels fill their gridspec
+     slot (the slight 4:3 → row-dependent stretch is acceptable for
+     these schematic figures and the alternative leaves large gaps).
+   - Row 2 titles broken into two lines so the `α` annotation no
+     longer collides with the cbar exponent label.
 
 ## Workflow (v2.9.0 — tighter backward walk + dual-polarity polar-cap MP4)
 
@@ -345,7 +374,7 @@ post-processing chain.
 ### RWB recipe (from `processed.nc`)
 
 ```bash
-cd /net/flood/data2/users/x_yan/barotropic_vorticity_model/thorncroft_rwb
+cd /net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/thorncroft_rwb
 ENV=blocking          # has pvtend, xarray, TempestExtremes wrappers
 
 # 1. Build per-LC anomaly NetCDFs for the 3 tracking methods
@@ -412,7 +441,7 @@ thorncroft_rwb/
 ## Running
 
 ```bash
-cd /net/flood/data2/users/x_yan/barotropic_vorticity_model/thorncroft_rwb
+cd /net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/thorncroft_rwb
 source scripts/env.sh                 # julia 1.10.8 + speedy_weather env
 julia --project=. scripts/setup_julia.jl   # first time only
 
