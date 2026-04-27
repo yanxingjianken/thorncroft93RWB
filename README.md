@@ -143,7 +143,7 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
-## Workflow (v2.8.0 — backward-extended pre-onset tracking)
+## Workflow (v2.9.0 — tighter backward walk + dual-polarity polar-cap MP4)
 
 From v2.4.0 onwards the pipeline uses **zeta250 as the sole canonical
 tracking method**. The `pv330` and `theta_pv2` pipelines remain in the
@@ -152,33 +152,37 @@ default scripts, CLI flags, and outputs target `zeta250` only.  Their
 previously-committed outputs have been moved to `outputs/archive/`
 (on disk, not tracked by git).
 
-**v2.8.0 changes** on top of v2.7.0:
+**v2.9.0 changes** on top of v2.8.0:
 
-1. **`scripts/extend_backward.py`** — anchor on existing top-6 zeta250
-   tracks (start day 6 LC1 / day 8 LC2), linear-interp missing hours,
-   and **walk hour-by-hour backward** by following the local
-   ζ′ extremum within ±5° of the last centre. Backward walk gates:
-   `|ζ′| > 0.25 × mask_thresh` (= 2.0e-6), per-hour jump < 7°, and
-   cumulative drift from anchor < 25°. Stops as soon as any gate
-   fails. Writes:
-   - `tracks/zeta250_back/tracks_{C,AC}_top6.txt` and `track_centers_{C,AC}.csv`
-   - `composites/zeta250_back/{C,AC}_composite.nc`
-   - `projections/zeta250_back/plots/theta_tilt_{C,AC}*.png`,
-     `tilt_animation_{C,AC}.mp4`
-   - `plots/zeta250_tracked_extended_backward.mp4` (polar-cap zeta250
-     anim, both C and AC trails together; cyan/gold = backward
-     extension, blue/orange = original forward).
-   Result: LC1 +43–44 h backward (day ≈ 4.2 → 10), LC2 +71 h
-   backward (day ≈ 5 → 12). The pre-onset window cleanly shows
-   LC1 stays NW-SE (+40°) while LC2 transitions from zonal (~0°)
-   to NE-SW (−60°) at day-8 onset.
-2. **`scripts/idealized_plot.py`** — 3-panel last row, each with its
-   own colourbar: β·Φ₁; (−aₓ·Φ₂)+(−a_y·Φ₃); (−γ₁·Φ₄)+(−γ₂·Φ₅) with
-   ellipse + C/S axis arrows. α convention:
-   `α = ½·atan2(γ₁, γ₂)` ∈ (−90°, 90°]; C-axis darkorange inward at α,
-   S-axis royalblue outward at α+90°.
+1. **Tighter `extend_backward.py` walk gates** — prevents jumping to a
+   spurious neighbouring extremum once the original feature dissolves
+   into the meridional background:
+   - `R_SEARCH_DEG`: 5° → 3.5°
+   - `JUMP_MAX_DEG_PER_H`: 7° → 3.5°
+   - `BACK_THRESH_FACTOR`: 0.25 → 0.4
+   - **New magnitude-continuity gate**: stop if
+     `|val_new| < 0.5·|val_prev|` AND `|val_new| < 0.5·mask_thresh`.
+   Backward extension shrinks LC1 +30/+31 h (was +43/+44 h);
+   LC2 +60 h (was +71 h). LC2 tilt time series no longer has the
+   sudden spikes the v2.8 walk produced when it overshot into noise.
+2. **Polar-cap MP4 always shows BOTH C and AC tracks**. Running
+   `--polarity C` alone (or `AC` alone) now also reads the existing
+   extended tracks of the *other* polarity from disk so the MP4
+   contains blue/cyan (C) **and** orange/gold (AC) trails together.
+3. **Tilt animations & static PNGs** use **hours since simulation
+   start** (day 5 → hour 120). Std-onset markers in legends now show
+   both hour and day.
+4. **Idealized 3-row plot for the backward composite**.
+   `idealized_plot.process(..., method="zeta250_back", t_k=12)` is
+   called per polarity in `extend_backward.py::run_idealized_back`.
+   `t_k = 12` (12 h after the earliest backward composite frame ≈
+   ½ day after the earliest backward-tracked timestamp). Output:
+   `outputs/<lc>/projections/zeta250_back/idealized_plot/<lc>_idealized_3row_{C,AC}.png`.
 
 ### Earlier history
+
+**v2.8.0** added `extend_backward.py` (looser gates, single-polarity
+MP4, simulation-day x-axis). Superseded by v2.9.0 above.
 
 **v2.7.0 changes** on top of v2.6.0:
 

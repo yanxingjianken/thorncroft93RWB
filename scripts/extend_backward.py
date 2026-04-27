@@ -32,7 +32,8 @@ Outputs (per LC, each polarity):
   outputs/<lc>/projections/zeta250_back/plots/theta_tilt_{pol}.png
   outputs/<lc>/projections/zeta250_back/plots/theta_tilt_accum_{pol}.png
   outputs/<lc>/projections/zeta250_back/plots/tilt_animation_{pol}.mp4
-  outputs/<lc>/plots/zeta250_tracked_extended_backward.mp4   ← C only
+  outputs/<lc>/projections/zeta250_back/idealized_plot/<lc>_idealized_3row_{pol}.png
+  outputs/<lc>/plots/zeta250_tracked_extended_backward.mp4   ← C + AC
 """
 from __future__ import annotations
 
@@ -65,6 +66,7 @@ from tilt_evolution import (  # noqa: E402
     _strict_mask, _unwrap_mod180, _wrap_diff,
 )
 from track_utils import parse_stitchnodes  # noqa: E402
+import idealized_plot as IDEAL  # noqa: E402
 
 # ---------------------------------------------------------------------------
 ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
@@ -74,17 +76,22 @@ METHOD = "zeta250"
 METHOD_TAG = "zeta250_back"
 
 # Backward walk: search radius around last known centre and per-hour jump cap.
-R_SEARCH_DEG = 5.0           # ≤ STITCH_RANGE_DEG of standard tracker
-JUMP_MAX_DEG_PER_H = float(CFG.JUMP_MAX_DEG_PER_H)
+# v2.9.0: tightened to prevent the walk from jumping to a spurious nearby
+# feature once the original feature dissolves into the meridional background.
+R_SEARCH_DEG = 3.5           # ≤ STITCH_RANGE_DEG of standard tracker
+JUMP_MAX_DEG_PER_H = 3.5     # was 7.0 (too loose); typical RWB drift ≤ 3°/h
 MIN_LAT_BACK = float(CFG.LAT_MIN)
 MAX_LAT_BACK = float(CFG.LAT_MAX)
 
 # In the pre-development phase the feature is weaker than ``mask_thresh``.
 # We loosen the magnitude gate to ``BACK_THRESH_FACTOR × mask_thresh`` and
-# instead lean on (a) the jump-per-hour cap and (b) a cumulative-drift cap
-# from the original first-tracked position to keep the walk continuous.
-BACK_THRESH_FACTOR = 0.25
+# instead lean on (a) the jump-per-hour cap, (b) cumulative-drift cap from
+# the original first-tracked position, and (c) a magnitude-continuity gate
+# that stops the walk if the candidate point is markedly weaker than the
+# previous one (catching jumps to spurious neighbouring extrema).
+BACK_THRESH_FACTOR = 0.4
 MAX_TOTAL_DRIFT_DEG = 25.0   # great-circle from the original first point
+BACK_MIN_VAL_FRACTION = 0.5  # |val_new| ≥ 0.5·|val_prev| OR |val_new| ≥ 0.5·thr
 
 # Earliest backward start per LC (don't walk before these days).
 WINDOW_BACK_BY_LC: dict[str, tuple[int, int]] = {
@@ -206,7 +213,18 @@ def _walk_backward(track: list[dict], anom_da: xr.DataArray,
                    t_min: datetime, max_back_h: int):
     """Prepend hourly points walked backward from track[0] until a gate
     fails or t_min is reached.
+
+    Gates (any failing → stop walk):
+        1. magnitude > BACK_THRESH_FACTOR × mask_thresh
+        2. per-hour jump < JUMP_MAX_DEG_PER_H
+        3. cumulative drift from anchor (original first point) < MAX_TOTAL_DRIFT_DEG
+        4. magnitude continuity:
+              |val_new| ≥ BACK_MIN_VAL_FRACTION · |val_prev|
+              OR |val_new| ≥ 0.5 · mask_thresh
+           (catches jumps to a much weaker spurious neighbouring extremum)
     """
+    spec = CFG.METHOD[METHOD]
+    mask_thr = float(spec["mask_thresh"])
     extended = list(track)
     if not extended:
         return extended
@@ -232,11 +250,19 @@ def _walk_backward(track: list[dict], anom_da: xr.DataArray,
             break
         lon_n, lat_n, val_n = result
 
+        # Gate 2 — per-hour jump
         d_jump = great_circle_deg(prev["lon"], prev["lat"], lon_n, lat_n)
         if d_jump > JUMP_MAX_DEG_PER_H:
             break
+        # Gate 3 — cumulative drift from anchor
         d_drift = great_circle_deg(anchor_lon, anchor_lat, lon_n, lat_n)
         if d_drift > MAX_TOTAL_DRIFT_DEG:
+            break
+        # Gate 4 — magnitude continuity vs previous tracked point
+        prev_mag = abs(prev["val"])
+        new_mag = abs(val_n)
+        if (new_mag < BACK_MIN_VAL_FRACTION * prev_mag
+                and new_mag < 0.5 * mask_thr):
             break
 
         new_pt = {"time": t_target, "lon": lon_n, "lat": lat_n,
@@ -685,21 +711,22 @@ def run_tilt(lc: str, polarity: str = "C"):
 
     plots = ROOT / "outputs" / lc / "projections" / METHOD_TAG / "plots"
     plots.mkdir(parents=True, exist_ok=True)
-    day_axis = (win_h0 + t_hour) / 24.0
-    std_day = std_onset_h / 24.0
+    # v2.9.0: x-axis is now "hours since 2000-01-01 00:00" (day 5 → hour 120).
+    hours_axis = (win_h0 + t_hour).astype("float64")
+    std_hour = float(std_onset_h)
 
     theta_obs_uw  = _unwrap_mod180(theta_obs)
     theta_pred_uw = _unwrap_mod180(theta_pred)
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(day_axis, theta_obs_uw,  "g-",  lw=2,   label="obs")
-    ax.plot(day_axis, theta_pred_uw, "c--", lw=1.5, label="pred (+1 h)")
-    ax.axvline(std_day, color="k", lw=1.2, ls="--",
-               label=f"std onset (day {std_day:.0f})")
+    ax.plot(hours_axis, theta_obs_uw,  "g-",  lw=2,   label="obs")
+    ax.plot(hours_axis, theta_pred_uw, "c--", lw=1.5, label="pred (+1 h)")
+    ax.axvline(std_hour, color="k", lw=1.2, ls="--",
+               label=f"std onset (h={std_hour:.0f}, day {std_hour/24:.0f})")
     ax.axhline(0, color="k", lw=0.4)
     ax.axhline(90, color="grey", lw=0.4, ls=":")
     ax.axhline(-90, color="grey", lw=0.4, ls=":")
-    ax.set_xlabel("simulation day")
+    ax.set_xlabel("hours since simulation start (day 0)")
     ax.set_ylabel("θ tilt [deg, unwrapped]")
     ax.set_title(f"{lc.upper()} {METHOD_TAG}/{polarity}  "
                  f"ellipse tilt (extended backward)")
@@ -722,12 +749,12 @@ def run_tilt(lc: str, polarity: str = "C"):
             dth_pred[i] = dth_pred[i - 1]
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(day_axis, dth_obs,  "g-",  lw=2,   label="∑Δθ obs")
-    ax.plot(day_axis, dth_pred, "c--", lw=1.5, label="∑Δθ pred (γ·Φ_def)")
-    ax.axvline(std_day, color="k", lw=1.2, ls="--",
-               label=f"std onset (day {std_day:.0f})")
+    ax.plot(hours_axis, dth_obs,  "g-",  lw=2,   label="∑Δθ obs")
+    ax.plot(hours_axis, dth_pred, "c--", lw=1.5, label="∑Δθ pred (γ·Φ_def)")
+    ax.axvline(std_hour, color="k", lw=1.2, ls="--",
+               label=f"std onset (h={std_hour:.0f}, day {std_hour/24:.0f})")
     ax.axhline(0, color="k", lw=0.4)
-    ax.set_xlabel("simulation day")
+    ax.set_xlabel("hours since simulation start (day 0)")
     ax.set_ylabel("accumulated tilt change [deg]")
     ax.set_title(f"{lc.upper()} {METHOD_TAG}/{polarity}  "
                  f"accumulated tilt (extended backward)")
@@ -736,35 +763,75 @@ def run_tilt(lc: str, polarity: str = "C"):
     fig.savefig(plots / f"theta_tilt_accum_{polarity}.png", dpi=140)
     plt.close(fig)
 
+    # v2.9.0: animation x-axis hours-from-day-0 (sim start).
+    t_hour_disp = (np.asarray(t_hour, dtype="float64") + float(win_h0))
     _make_animation(lc, METHOD_TAG, polarity,
                     q, qa, pv_dt, deform_field,
                     mask_frames, X, Y, x_rel, y_rel,
-                    t_hour, theta_obs, a_obs, b_obs, xc_obs, yc_obs,
+                    t_hour_disp, theta_obs, a_obs, b_obs, xc_obs, yc_obs,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
                     fit_thr, guard_r, mask_str, dx_m, dy_m, plots)
     print(f"[{lc}:{polarity}] tilt + 4-panel animation done.")
 
 
+def run_idealized_back(lc: str, polarity: str = "C"):
+    """Idealized 3-row decomposition figure on the backward-extended composite.
+
+    Picks the projection frame at ``t_k = round(0.5 * 24) = 12`` h after
+    the earliest backward composite frame (i.e. 0.5 day after the
+    earliest timestamp of the full backward+forward track window).
+    Output:  outputs/<lc>/projections/zeta250_back/idealized_plot/<lc>_idealized_3row_<pol>.png
+    """
+    comp_nc = (ROOT / "outputs" / lc / "composites" / METHOD_TAG
+               / f"{polarity}_composite.nc")
+    if not comp_nc.exists():
+        print(f"[{lc}:{polarity}] {comp_nc} missing; skip idealized")
+        return
+    with xr.open_dataset(comp_nc) as ds:
+        nt = ds.dims["t"]
+    t_k = 12  # 0.5 day after the earliest backward frame
+    if t_k > nt - 2:
+        t_k = max(1, nt - 2)
+    IDEAL.process(lc, polarity, method=METHOD_TAG, t_k=t_k)
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
+def _load_extended_tracks_from_disk(lc: str, polarity: str):
+    """Load already-built extended top-6 tracks for a polarity from disk
+    (so a single-polarity rerun can still draw both on the polar-cap MP4).
+    Returns [] if missing.
+    """
+    p = (ROOT / "outputs" / lc / "tracks" / METHOD_TAG
+         / f"tracks_{polarity}_top6.txt")
+    if not p.exists():
+        return []
+    try:
+        return parse_stitchnodes(p)
+    except Exception:
+        return []
+
+
 def process(lc: str, polarities: list[str]):
     print(f"\n{'=' * 60}\n  {lc.upper()}  build extended tracks\n{'=' * 60}")
-    extended_by_pol = {}
+    extended_by_pol: dict[str, list] = {}
     for pol in polarities:
         tracks = build_extended_tracks(lc, pol)
         export_csv(lc, tracks, pol)
         extended_by_pol[pol] = tracks
 
-    # Polar-cap MP4 with both polarities (C primary)
-    render_polar_cap_anim(lc,
-                          extended_by_pol.get("C", []),
-                          extended_by_pol.get("AC"))
+    # Always include both polarities on the polar-cap MP4: pull the other
+    # polarity's existing extended tracks from disk if it wasn't rebuilt now.
+    tracks_C  = extended_by_pol.get("C")  or _load_extended_tracks_from_disk(lc, "C")
+    tracks_AC = extended_by_pol.get("AC") or _load_extended_tracks_from_disk(lc, "AC")
+    render_polar_cap_anim(lc, tracks_C, tracks_AC)
 
-    # Composites + tilt per polarity
+    # Composites + tilt per polarity actually requested this run
     for pol in polarities:
         build_composites(lc, pol)
         run_tilt(lc, pol)
+        run_idealized_back(lc, pol)
 
 
 if __name__ == "__main__":

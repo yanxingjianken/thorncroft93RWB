@@ -87,8 +87,10 @@ def _panel(ax, X, Y, F, vmax, title, cmap="RdBu_r"):
     return im
 
 
-def process(lc: str, polarity: str = "C"):
-    method = CFG.CANONICAL_METHOD
+def process(lc: str, polarity: str = "C",
+            method: str | None = None, t_k: int | None = None):
+    if method is None:
+        method = CFG.CANONICAL_METHOD
     comp_nc = ROOT / lc / "composites" / method / f"{polarity}_composite.nc"
     if not comp_nc.exists():
         print(f"[{lc}:{polarity}] composite missing: {comp_nc}")
@@ -99,9 +101,11 @@ def process(lc: str, polarity: str = "C"):
     x   = ds["x"].values.astype("float64")
     y   = ds["y"].values.astype("float64")
     t_h = ds["t"].values.astype("float64")
+    win_h0 = int(ds.attrs.get("win_h0_sim", 0))
     ds.close()
 
-    t_k = DAY_TK.get(lc, 1)
+    if t_k is None:
+        t_k = DAY_TK.get(lc, 1)
     if not (1 <= t_k <= q.shape[0] - 2):
         print(f"[{lc}] t_k={t_k} out of range")
         return
@@ -141,8 +145,11 @@ def process(lc: str, polarity: str = "C"):
     alpha_deg = 0.5 * np.degrees(np.arctan2(g1, g2))
     alpha_deg = ((alpha_deg + 90.0) % 180.0) - 90.0   # wrap to (-90°, 90°]
 
-    # central-component mask
-    fit_thr = float(CFG.METHOD[method]["mask_thresh"])
+    # central-component mask. ``method`` may be a tag like ``zeta250_back``
+    # (alternative composite of the same zeta250 field); fall back to the
+    # underlying canonical method's spec for thresholds.
+    spec_key = method if method in CFG.METHOD else CFG.CANONICAL_METHOD
+    fit_thr = float(CFG.METHOD[spec_key]["mask_thresh"])
     guard_r = float(CFG.PATCH_HALF_LAT - CFG.GUARD_PAD_DEG)
     raw_m = _strict_mask(qa_k, polarity, fit_thr, X, Y, guard_r)
 
@@ -246,7 +253,7 @@ def process(lc: str, polarity: str = "C"):
 
     fig.suptitle(
         f"{lc.upper()} {method}/{polarity}  "
-        f"day {(t_h[t_k]) / 24:.2f}  "
+        f"hour {(win_h0 + t_h[t_k]):.0f}  (day {(win_h0 + t_h[t_k]) / 24:.2f})  "
         rf"$\alpha={alpha_deg:+.1f}^\circ$",
         fontsize=12)
 
@@ -265,8 +272,12 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
     ap.add_argument("--polarity", choices=["C", "AC", "both"], default="C")
+    ap.add_argument("--method", default=None,
+                    help="composite method tag (default: CANONICAL_METHOD)")
+    ap.add_argument("--t_k", type=int, default=None,
+                    help="explicit composite-frame index for the projection")
     args = ap.parse_args()
     pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
     for lc in args.lcs:
         for pol in pols:
-            process(lc, pol)
+            process(lc, pol, method=args.method, t_k=args.t_k)
