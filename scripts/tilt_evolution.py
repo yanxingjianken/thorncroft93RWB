@@ -279,13 +279,14 @@ def process(lc: str, method: str, polarity: str = "C",
     theta_pred_cont = _unwrap_mod180(theta_pred)
 
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(t_hour, theta_obs_cont, "g-", lw=2, label="obs")
-    ax.plot(t_hour, theta_pred_cont, "c--", lw=1.5, label="pred (+1 h)")
-    ax.set_xlabel("composite hour"); ax.set_ylabel("θ tilt [deg, unwrapped]")
+    t_abs = t_hour + win_h0
+    ax.plot(t_abs, theta_obs_cont, "g-", lw=2, label="obs")
+    ax.plot(t_abs, theta_pred_cont, "c--", lw=1.5, label="pred (+1 h)")
+    ax.set_xlabel("simulation hour"); ax.set_ylabel("θ tilt [deg, unwrapped]")
     ax.set_title(f"{lc.upper()} {method}/{polarity}  ellipse tilt")
     ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
-    if start_t_local is not None:
-        ax.set_xlim(left=start_t_local)
+    if start_hour_abs is not None:
+        ax.set_xlim(left=float(start_hour_abs))
     fig.tight_layout()
     fig.savefig(plots / f"theta_tilt_{polarity}.png", dpi=140)
     plt.close(fig)
@@ -305,14 +306,14 @@ def process(lc: str, method: str, polarity: str = "C",
             dth_pred[i] = dth_pred[i-1]
 
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(t_hour, dth_obs, "g-", lw=2, label="∑Δθ obs")
-    ax.plot(t_hour, dth_pred, "c--", lw=1.5, label="∑Δθ pred")
-    ax.set_xlabel("composite hour")
+    ax.plot(t_abs, dth_obs, "g-", lw=2, label="∑Δθ obs")
+    ax.plot(t_abs, dth_pred, "c--", lw=1.5, label="∑Δθ pred")
+    ax.set_xlabel("simulation hour")
     ax.set_ylabel("accumulated tilt change [deg]")
     ax.set_title(f"{lc.upper()} {method}/{polarity}  accumulated tilt")
     ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
-    if start_t_local is not None:
-        ax.set_xlim(left=start_t_local)
+    if start_hour_abs is not None:
+        ax.set_xlim(left=float(start_hour_abs))
     fig.tight_layout()
     fig.savefig(plots / f"theta_tilt_accum_{polarity}.png", dpi=140)
     plt.close(fig)
