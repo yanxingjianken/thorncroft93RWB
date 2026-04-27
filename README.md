@@ -144,6 +144,32 @@ Quick recipes:
 - **Ultra-clean filaments** — `diffusion.time_scale_hours=6.0`,
   `simulation.n_days=12` (blow-up is then the main risk).
 
+## Workflow (v2.10.1 — back idealized fix + tilt --start_hour crop)
+
+**v2.10.1 changes** on top of v2.10.0:
+
+1. **Back idealized plot fix.** `scripts/idealized_plot.py` now picks
+   `t_k` from the absolute simulation hour (forward window start +
+   `DAY_TK[lc]`), so back-extended composites land on the same
+   physical moment as the forward composite. Previously it used the
+   raw forward `t_k` against the back composite (which starts
+   ~`win_h0_sim` h earlier), which fell in the early back-window
+   where the wave hasn't formed yet — the central-component mask was
+   empty and the dashed mask contour, fitted ellipse, major axis,
+   and C/S deformation arrows were all missing. With the fix all
+   four annotations appear correctly on the back plots.
+2. **Tilt time-series crop.** `scripts/tilt_evolution.py` gained a
+   `--start_hour <abs_h>` CLI flag (and `start_hour_abs=` kwarg) that
+   sets `xlim(left=…)` on the two tilt PNGs and restricts the
+   animation frames to those at/after the requested absolute hour.
+   For LC2 back: `--start_hour 180` cropped the plots/animation to
+   start at composite hour 49 (= abs hour 180; win_h0_sim=131).
+3. **Both scripts** now read `win_h0_sim` consistently (defaulting to
+   the LC's forward window start when the attribute is absent), and
+   `tilt_evolution` uses the same `spec_key` fallback as
+   `idealized_plot` so unknown method tags like `zeta250_back` reuse
+   `zeta250` thresholds.
+
 ## Workflow (v2.10.0 — repo relocation + idealized 3-row layout redesign)
 
 **v2.10.0 changes** on top of v2.9.0:

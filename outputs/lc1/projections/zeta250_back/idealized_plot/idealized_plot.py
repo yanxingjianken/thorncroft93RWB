@@ -40,7 +40,7 @@ import _config as CFG  # noqa
 from _grad_safe import safe_gradient, mask_vmax  # noqa
 from tilt_evolution import _strict_mask, _fit_ellipse, _ellipse_axis_endpoints  # noqa
 
-ROOT = Path("/net/flood/data2/users/x_yan/barotropic_vorticity_model/"
+ROOT = Path("/net/flood/data2/users/x_yan/literature_review/rwb/thorncroft93_baroclinic/"
             "thorncroft_rwb/outputs")
 M_PER_DEG = 111_000.0
 
@@ -104,13 +104,23 @@ def process(lc: str, polarity: str = "C",
     x   = ds["x"].values.astype("float64")
     y   = ds["y"].values.astype("float64")
     t_h = ds["t"].values.astype("float64")
-    win_h0 = int(ds.attrs.get("win_h0_sim", 0))
+    win_h0 = ds.attrs.get("win_h0_sim", None)
     ds.close()
+    # For forward composites the win_h0_sim attr is missing → use the LC's
+    # forward window start so suptitle reports correct absolute hour.
+    win_h0 = int(win_h0) if win_h0 is not None else int(CFG.window_for(lc)[0])
 
     if t_k is None:
-        t_k = DAY_TK.get(lc, 1)
+        # For back-extended composites, the window starts ~win_h0_sim hours
+        # earlier than the forward window. Pick t_k so that the absolute
+        # simulation hour matches the forward target (lc1 hour 156 = day 6.5,
+        # lc2 hour 193 ≈ day 8). Without this fix the back plots land in
+        # the early back-window where the wave has not yet amplified — the
+        # mask is empty and ellipse/arrows/dashed contour vanish.
+        target_abs_h = CFG.window_for(lc)[0] + DAY_TK.get(lc, 1)
+        t_k = int(target_abs_h - win_h0)
     if not (1 <= t_k <= q.shape[0] - 2):
-        print(f"[{lc}] t_k={t_k} out of range")
+        print(f"[{lc}] t_k={t_k} out of range (q.shape[0]={q.shape[0]})")
         return
 
     # Centred difference for ∂q/∂t (per second)

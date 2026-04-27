@@ -168,8 +168,17 @@ def _predict_one_step(qa_now, q_now, X_m, Y_m, x_rel, y_rel,
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
-def process(lc: str, method: str, polarity: str = "C"):
-    spec = CFG.METHOD[method]
+def process(lc: str, method: str, polarity: str = "C",
+            start_hour_abs: float | None = None):
+    """Compute tilt evolution; optionally crop plots/animation to start
+    from absolute simulation hour ``start_hour_abs`` (window_local +
+    win_h0_sim). Useful for back-extended composites where the early
+    portion has no detectable wave structure."""
+    # ``method`` may be a tag like ``zeta250_back`` (alternative composite
+    # of the same zeta250 field); fall back to the underlying canonical
+    # method's spec for thresholds.
+    spec_key = method if method in CFG.METHOD else CFG.CANONICAL_METHOD
+    spec = CFG.METHOD[spec_key]
     src = ROOT / lc / "composites" / method / f"{polarity}_composite.nc"
     if not src.exists():
         print(f"[{lc}:{method}:{polarity}] missing {src}; skipping")
@@ -178,9 +187,17 @@ def process(lc: str, method: str, polarity: str = "C"):
     q = ds["total_composite"].values.astype("float64")
     qa = ds["anom_composite"].values.astype("float64")
     t_hour = ds["t"].values
+    win_h0 = ds.attrs.get("win_h0_sim", None)
+    win_h0 = int(win_h0) if win_h0 is not None else int(CFG.window_for(lc)[0])
     x_rel = ds["x"].values.astype("float64")
     y_rel = ds["y"].values.astype("float64")
     X, Y = np.meshgrid(x_rel, y_rel)
+    # Window-local hour at which the user-requested absolute start hour
+    # falls. ``None`` → no cropping.
+    if start_hour_abs is None:
+        start_t_local = None
+    else:
+        start_t_local = float(start_hour_abs) - float(win_h0)
 
     nt = q.shape[0]
     fit_thr = float(spec["mask_thresh"])
@@ -267,6 +284,8 @@ def process(lc: str, method: str, polarity: str = "C"):
     ax.set_xlabel("composite hour"); ax.set_ylabel("θ tilt [deg, unwrapped]")
     ax.set_title(f"{lc.upper()} {method}/{polarity}  ellipse tilt")
     ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
+    if start_t_local is not None:
+        ax.set_xlim(left=start_t_local)
     fig.tight_layout()
     fig.savefig(plots / f"theta_tilt_{polarity}.png", dpi=140)
     plt.close(fig)
@@ -292,16 +311,19 @@ def process(lc: str, method: str, polarity: str = "C"):
     ax.set_ylabel("accumulated tilt change [deg]")
     ax.set_title(f"{lc.upper()} {method}/{polarity}  accumulated tilt")
     ax.axhline(0, color="k", lw=0.4); ax.legend(); ax.grid(alpha=0.3)
+    if start_t_local is not None:
+        ax.set_xlim(left=start_t_local)
     fig.tight_layout()
     fig.savefig(plots / f"theta_tilt_accum_{polarity}.png", dpi=140)
     plt.close(fig)
 
-    # ----- 4-panel animation
+    # ----- 4-panel animation (optionally crop to start_t_local)
     _make_animation(lc, method, polarity, q, qa, pv_dt, deform_field,
                     mask_frames, X, Y, x_rel, y_rel,
                     t_hour, theta_obs, a_obs, b_obs, xc_obs, yc_obs,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
-                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots)
+                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots,
+                    start_t_local=start_t_local)
     print(f"[{lc}:{method}:{polarity}] wrote tilt outputs in {plots}")
 
 
@@ -317,8 +339,18 @@ def _make_animation(lc, method, polarity,
                     X, Y, x_rel, y_rel, t_hour,
                     theta_obs, a_obs, b_obs, xc_obs, yc_obs,
                     theta_pred, a_pred, b_pred, xc_pred, yc_pred,
-                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots):
+                    fit_thr, guard_r, mask_str, dx_m, dy_m, plots,
+                    start_t_local: float | None = None):
     nt = q.shape[0]
+    # If a start hour (window-local) was given, restrict the frames
+    # rendered to those at or after it.
+    if start_t_local is not None:
+        valid_frames = [i for i in range(nt) if t_hour[i] >= start_t_local]
+    else:
+        valid_frames = list(range(nt))
+    if not valid_frames:
+        print(f"  start_t_local={start_t_local} excludes all frames; skipping")
+        return
     # Mask-region-based vmax: per panel, take max |·| over (mask & finite)
     # pixels across all frames.  This avoids basis edge-blow-up dominating
     # the colour scale.  ``mask_frames`` is the central-component mask from
@@ -450,7 +482,7 @@ def _make_animation(lc, method, polarity,
             fontsize=11)
         return []
 
-    anim = FuncAnimation(fig, _frame, frames=range(nt), blit=False,
+    anim = FuncAnimation(fig, _frame, frames=valid_frames, blit=False,
                          interval=1000 / CFG.ANIM_FPS)
     out_mp4 = plots / f"tilt_animation_{polarity}.mp4"
     writer = FFMpegWriter(fps=CFG.ANIM_FPS, bitrate=2200)
@@ -463,10 +495,14 @@ if __name__ == "__main__":
     ap.add_argument("lcs", nargs="*", default=["lc1", "lc2"])
     ap.add_argument("--method", default=None)
     ap.add_argument("--polarity", choices=["C", "AC", "both"], default="both")
+    ap.add_argument("--start_hour", type=float, default=None,
+                    help="Crop tilt PNGs and animation to start at this "
+                         "absolute simulation hour (e.g. 180 for lc2 back).")
     args = ap.parse_args()
     methods = [args.method] if args.method else [CFG.CANONICAL_METHOD]
     pols = ["C", "AC"] if args.polarity == "both" else [args.polarity]
     for lc in args.lcs:
         for m in methods:
             for pol in pols:
-                process(lc, m, polarity=pol)
+                process(lc, m, polarity=pol,
+                        start_hour_abs=args.start_hour)
