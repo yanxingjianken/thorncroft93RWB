@@ -284,6 +284,8 @@ graph TD
     R --> SD[projections/zeta250/data/tilt_&#123;C,AC&#125;.npz]
     O --> ID[scripts/idealized_plot.py<br/>3-row idealised figure<br/>row1 dq/dt+recon+resid,<br/>row2 &Phi;&#8321;..&Phi;&#8325;, row3 scaled bases<br/>+ &alpha; stretching arrows]
     ID --> IDP[projections/zeta250/idealized_plot/<br/>&lt;lc&gt;_idealized_3row_&#123;C,AC&#125;.png]
+    O --> EGU[scripts/egu_animation.py<br/>4&times;3 diagnostic mp4 per lc&times;polarity<br/>row1 &zeta; / total q / q'+ellipse,<br/>row2 &part;q/&part;t / recon / residual,<br/>row3 component fields,<br/>row4 area / displacement / tilt vs predictions]
+    EGU --> EGUP[egu/&lt;lc&gt;_egu_&#123;C,AC&#125;.mp4]
     O --> W[plotting/make_tracked_anim.py<br/>zeta250 default]
     W --> WPMP[outputs/&lt;lc&gt;/plots/zeta250_tracked.mp4]
     E --> FIG[plotting/make_figures.py<br/>cf.remove fix, no ax.clear]
